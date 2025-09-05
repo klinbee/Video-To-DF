@@ -1,21 +1,102 @@
 use ffmpeg_next as ffmpeg;
+use std::path::Path;
+use std::time::Instant;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let start = Instant::now();
+    let target_frame: usize = 1337;
+    let frames = get_single_channel_frames("Bad_Apple!!.mp4")?;
+    let my_frame = frames.get(target_frame).ok_or("Frame not found!")?;
+    my_frame.save_as(&format!("frame_{}.png", target_frame))?;
+    let duration = start.elapsed();
+    println!("Time Elapsed: {}", duration.as_secs_f64());
+    Ok(())
+}
+
+struct GrayFrame {
+    data: Vec<u8>,
+    width: u16,
+    height: u16,
+}
+
+impl GrayFrame {
+    fn new(data: &[u8], width: u16, height: u16) -> GrayFrame {
+        GrayFrame {
+            data: data.to_owned(),
+            width,
+            height,
+        }
+    }
+
+    fn solid_color(width: u16, height: u16, color: u8) -> GrayFrame {
+        GrayFrame {
+            data: vec![color; (width * height) as usize],
+            width,
+            height,
+        }
+    }
+
+    fn add_border(&self, border_width: u16, border_color: u8) -> GrayFrame {
+        let new_width = self.width + 2 * border_width;
+        let new_height = self.height + 2 * border_width;
+
+        let mut with_border = GrayFrame::solid_color(new_width, new_height, border_color);
+
+        for y in 0..self.height {
+            let src_start = y as usize * self.width as usize;
+            let src_end = src_start + self.width as usize;
+            let dst_start =
+                ((y as usize + border_width as usize) * new_width as usize) + border_width as usize;
+            let dst_end = dst_start + self.width as usize;
+
+            with_border.data[dst_start..dst_end].copy_from_slice(&self.data[src_start..src_end]);
+        }
+        with_border
+    }
+
+    fn save_as(&self, filename: &str) -> Result<(), Box<dyn std::error::Error>> {
+        use image::{ImageBuffer, Luma};
+
+        // Create image buffer from grayscale data
+        let mut img_data = Vec::with_capacity(self.width as usize * self.height as usize);
+
+        // Copy data row by row to handle stride
+        for y in 0..self.height {
+            let row_start = y as usize * self.width as usize;
+            let row_end = row_start as usize + self.width as usize;
+            img_data.extend_from_slice(&self.data[row_start..row_end]);
+        }
+
+        let img: ImageBuffer<Luma<u8>, Vec<u8>> =
+            ImageBuffer::from_raw(self.width as u32, self.height as u32, img_data)
+                .ok_or("Failed to create image buffer")?;
+
+        img.save(filename)?;
+        println!("Saved PNG to {}", filename);
+        Ok(())
+    }
+}
+
+fn get_single_channel_frames<P: AsRef<Path>>(
+    video_path: P,
+) -> Result<Vec<GrayFrame>, Box<dyn std::error::Error>> {
     ffmpeg::init()?;
 
-    let mut input = ffmpeg::format::input("Bad_Apple!!.mp4")?;
+    let mut input = ffmpeg::format::input(video_path.as_ref())?;
+
     let video_stream = input
         .streams()
         .best(ffmpeg::media::Type::Video)
         .ok_or("No video stream found")?;
+
     let video_stream_index = video_stream.index();
 
-    let context_decoder =
-        ffmpeg::codec::context::Context::from_parameters(video_stream.parameters())?;
-    let mut decoder = context_decoder.decoder().video()?;
+    let mut decoder = ffmpeg::codec::context::Context::from_parameters(video_stream.parameters())?
+        .decoder()
+        .video()?;
 
-    // Set up scaler to convert to grayscale
-    let mut scaler = ffmpeg::software::scaling::context::Context::get(
+    // Set up context to convert to grayscale
+    let mut grayscale_ctx = ffmpeg::software::scaling::context::Context::get(
         decoder.format(),
         decoder.width(),
         decoder.height(),
@@ -25,8 +106,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ffmpeg::software::scaling::flag::Flags::BILINEAR,
     )?;
 
-    let mut frame_count = 0;
-    let target_frame = 50;
+    let mut frames: Vec<GrayFrame> = vec![];
 
     for (stream, packet) in input.packets() {
         if stream.index() == video_stream_index {
@@ -34,125 +114,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let mut decoded = ffmpeg::util::frame::video::Video::empty();
             while decoder.receive_frame(&mut decoded).is_ok() {
-                frame_count += 1;
+                let mut gray_frame = ffmpeg::util::frame::video::Video::empty();
 
-                if frame_count == target_frame {
-                    // Convert to grayscale
-                    let mut gray_frame = ffmpeg::util::frame::video::Video::empty();
-                    scaler.run(&decoded, &mut gray_frame)?;
+                grayscale_ctx.run(&decoded, &mut gray_frame)?;
 
-                    // Extract pixel data
-                    let width = gray_frame.width() as usize;
-                    let height = gray_frame.height() as usize;
-                    let data = gray_frame.data(0); // Single channel data
-                    let stride = gray_frame.stride(0);
-
-                    println!("Frame {}: {}x{} grayscale", frame_count, width, height);
-
-                    // Save as PNG
-                    save_as_png(&data, stride, width, height, "frame_50.png")?;
-
-                    // Save as JPEG
-                    save_as_jpeg(&data, stride, width, height, "frame_50.jpg")?;
-
-                    // You can also work with the pixel data directly:
-                    process_grayscale_pixels(&data, stride, width, height);
-
-                    return Ok(());
-                }
+                frames.push(GrayFrame::new(
+                    gray_frame.data(0), // Single channel data
+                    gray_frame.width() as u16,
+                    gray_frame.height() as u16,
+                ));
             }
         }
     }
-
-    println!("Video has fewer than {} frames", target_frame);
-    Ok(())
-}
-
-fn save_as_png(
-    data: &[u8],
-    stride: usize,
-    width: usize,
-    height: usize,
-    filename: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use image::{ImageBuffer, Luma};
-
-    // Create image buffer from grayscale data
-    let mut img_data = Vec::with_capacity(width * height);
-
-    // Copy data row by row to handle stride
-    for y in 0..height {
-        let row_start = y * stride;
-        let row_end = row_start + width;
-        img_data.extend_from_slice(&data[row_start..row_end]);
-    }
-
-    let img: ImageBuffer<Luma<u8>, Vec<u8>> =
-        ImageBuffer::from_raw(width as u32, height as u32, img_data)
-            .ok_or("Failed to create image buffer")?;
-
-    img.save(filename)?;
-    println!("Saved PNG to {}", filename);
-    Ok(())
-}
-
-fn save_as_jpeg(
-    data: &[u8],
-    stride: usize,
-    width: usize,
-    height: usize,
-    filename: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use image::{ImageBuffer, Luma};
-
-    // Create image buffer from grayscale data
-    let mut img_data = Vec::with_capacity(width * height);
-
-    // Copy data row by row to handle stride
-    for y in 0..height {
-        let row_start = y * stride;
-        let row_end = row_start + width;
-        img_data.extend_from_slice(&data[row_start..row_end]);
-    }
-
-    let img: ImageBuffer<Luma<u8>, Vec<u8>> =
-        ImageBuffer::from_raw(width as u32, height as u32, img_data)
-            .ok_or("Failed to create image buffer")?;
-
-    img.save(filename)?;
-    println!("Saved JPEG to {}", filename);
-    Ok(())
-}
-
-fn process_grayscale_pixels(data: &[u8], stride: usize, width: usize, height: usize) {
-    println!("Processing grayscale pixels...");
-
-    // Example: Calculate average brightness
-    let mut sum = 0u64;
-    let mut pixel_count = 0;
-
-    for y in 0..height {
-        for x in 0..width {
-            let pixel_value = data[y * stride + x];
-            sum += pixel_value as u64;
-            pixel_count += 1;
-        }
-    }
-
-    let average_brightness = sum / pixel_count;
-    println!("Average pixel brightness: {}", average_brightness);
-
-    // Example: Find brightest and darkest pixels
-    let mut min_val = 255u8;
-    let mut max_val = 0u8;
-
-    for y in 0..height {
-        for x in 0..width {
-            let pixel_value = data[y * stride + x];
-            min_val = min_val.min(pixel_value);
-            max_val = max_val.max(pixel_value);
-        }
-    }
-
-    println!("Pixel value range: {} to {}", min_val, max_val);
+    Ok(frames)
 }
