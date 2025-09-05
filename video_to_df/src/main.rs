@@ -2,7 +2,9 @@ use ffmpeg_next as ffmpeg;
 use std::path::Path;
 use std::time::Instant;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
+fn main() -> Result<()> {
     let start = Instant::now();
     let target_frame: usize = 1337;
     let frames = get_single_channel_frames("Bad_Apple!!.mp4")?;
@@ -54,7 +56,7 @@ impl GrayFrame {
         with_border
     }
 
-    fn save_as(&self, filename: &str) -> Result<(), Box<dyn std::error::Error>> {
+    fn save_as(&self, filename: &str) -> Result<()> {
         use image::{ImageBuffer, Luma};
 
         // Create image buffer from grayscale data
@@ -77,9 +79,10 @@ impl GrayFrame {
     }
 }
 
-fn get_single_channel_frames<P: AsRef<Path>>(
-    video_path: P,
-) -> Result<Vec<GrayFrame>, Box<dyn std::error::Error>> {
+fn get_single_channel_frames<P>(video_path: P) -> Result<Vec<GrayFrame>>
+where
+    P: AsRef<Path>,
+{
     ffmpeg::init()?;
 
     let mut input = ffmpeg::format::input(video_path.as_ref())?;
