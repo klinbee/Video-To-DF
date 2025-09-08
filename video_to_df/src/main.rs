@@ -1,95 +1,22 @@
 use base64::{Engine as _, engine::general_purpose};
+use core::f32;
 use ffmpeg_next as ffmpeg;
 use flate2::Compression;
 use flate2::write::ZlibEncoder;
 use serde_json::json;
-use std::fs;
 use std::io::Write;
 use std::path::Path;
+use std::{fs, usize};
 
 // Generic Result
 type GResult<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 fn main() -> GResult<()> {
-    // let start = Instant::now();
-    // let frames = get_single_channel_frames("Bad_Apple!!.mp4")?;
-    // println!("{}", frames.len());
-    // let duration = start.elapsed();
-    // println!("Got all frames in: {}", duration.as_secs_f64());
-    //single_frame_test(frames, 1337);
-    //write_all_frames_to(frames, "testing/stuff")
-    benchmark_real_pipeline()
-}
-
-fn benchmark_real_pipeline() -> GResult<()> {
-    use std::time::Instant;
-
-    let start = Instant::now();
-    fs::create_dir_all("temp")?;
     let frames = get_single_channel_frames("Bad_Apple!!.mp4")?;
-    let video_decode_time = start.elapsed();
-    println!("Video decode: {:.2}s", video_decode_time.as_secs_f64());
-
-    // 10 Frame Test
-    let test_frames: Vec<_> = frames.into_iter().take(10).collect();
-
-    println!("\nTiming per frame (first 10 frames):");
-    let x_size = test_frames[0].width as usize + 64;
-    let z_size = test_frames[0].height as usize + 64;
-
-    for (index, frame) in test_frames.iter().enumerate() {
-        let frame_start = Instant::now();
-
-        // Border
-        let border_start = Instant::now();
-        let bordered_frame = frame.add_border(32, 255);
-        let border_time = border_start.elapsed();
-
-        // SDF
-        let sdf_start = Instant::now();
-        let grad_frame = binary_sdf(&bordered_frame);
-        let sdf_time = sdf_start.elapsed();
-
-        // Compression
-        let compress_start = Instant::now();
-        let deflated_grad_frame = compress_zlib(&grad_frame)?;
-        let compress_time = compress_start.elapsed();
-
-        // Encoding
-        let json_start = Instant::now();
-        let encoded = general_purpose::STANDARD.encode(&deflated_grad_frame);
-        let frame_json = json!({
-            "type": "moredfs:single_channel_image_tessellation",
-            "x_size": x_size,
-            "z_size": z_size,
-            "deflated_frame_data": encoded
-        });
-        let json_string = serde_json::to_string(&frame_json)?;
-        let json_time = json_start.elapsed();
-
-        // File Writing
-        let write_start = Instant::now();
-        fs::write(format!("temp/frame_{}.json", index), &json_string)?;
-        let write_time = write_start.elapsed();
-
-        let total_frame_time = frame_start.elapsed();
-
-        println!(
-            "Frame {}: Total={:.1}ms | Border={:.1}ms | SDF={:.1}ms | Compress={:.1}ms | JSON={:.1}ms | Write={:.1}ms",
-            index,
-            total_frame_time.as_millis(),
-            border_time.as_millis(),
-            sdf_time.as_millis(),
-            compress_time.as_millis(),
-            json_time.as_millis(),
-            write_time.as_millis()
-        );
-    }
-
-    Ok(())
+    single_frame_test(frames, 1337)
 }
 
-fn single_frame_test(frames: Vec<GrayFrame>, target_frame: usize) -> GResult<()> {
+fn single_frame_test(frames: Vec<MonoFrame>, target_frame: usize) -> GResult<()> {
     let my_frame = frames.get(target_frame).ok_or("Frame not found!")?;
     my_frame.save_as(&format!("frame_{}.png", target_frame))?;
 
@@ -97,7 +24,7 @@ fn single_frame_test(frames: Vec<GrayFrame>, target_frame: usize) -> GResult<()>
 
     grad_frame.save_as(&format!("frame_grad_{}.png", target_frame))?;
 
-    let deflated_grad_frame = compress_zlib(&grad_frame).unwrap();
+    let deflated_grad_frame = compress_zlib(&grad_frame.data).unwrap();
     let encoded_deflated_grad_frame_data = general_purpose::STANDARD.encode(&deflated_grad_frame);
     let frame_json = json!(
         {
@@ -114,16 +41,16 @@ fn single_frame_test(frames: Vec<GrayFrame>, target_frame: usize) -> GResult<()>
     Ok(())
 }
 
-fn write_all_frames_to<P>(frames: Vec<GrayFrame>, path: P) -> GResult<()>
+fn write_all_frames_to<P>(frames: Vec<MonoFrame>, path: P) -> GResult<()>
 where
     P: AsRef<Path>,
 {
     fs::create_dir_all(path.as_ref())?;
     let x_size: usize = frames[0].width as usize;
     let z_size: usize = frames[0].height as usize;
-    for (index, frame) in frames.iter().enumerate() {
+    for (index, frame) in (1..).zip(frames.iter()) {
         let grad_frame = binary_sdf(&frame.add_border(32, 255));
-        let deflated_grad_frame = compress_zlib(&grad_frame).unwrap();
+        let deflated_grad_frame = compress_zlib(&grad_frame.data).unwrap();
         let encoded_deflated_grad_frame_data =
             general_purpose::STANDARD.encode(&deflated_grad_frame);
         let frame_json = json!(
@@ -165,40 +92,40 @@ where
     Ok(())
 }
 
-fn compress_zlib(frame: &GrayFrame) -> GResult<Vec<u8>> {
+fn compress_zlib(bytes: &[u8]) -> GResult<Vec<u8>> {
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::fast());
-    encoder.write_all(&frame.data)?;
+    encoder.write_all(bytes)?;
     Ok(encoder.finish()?)
 }
 
-pub struct GrayFrame {
+pub struct MonoFrame {
     data: Vec<u8>,
     width: u16,
     height: u16,
 }
 
-impl GrayFrame {
-    fn new(data: Vec<u8>, width: u16, height: u16) -> GrayFrame {
-        GrayFrame {
+impl MonoFrame {
+    fn new(data: Vec<u8>, width: u16, height: u16) -> MonoFrame {
+        MonoFrame {
             data: data,
             width,
             height,
         }
     }
 
-    fn solid_color(width: u16, height: u16, color: u8) -> GrayFrame {
-        GrayFrame {
+    fn solid_color(width: u16, height: u16, color: u8) -> MonoFrame {
+        MonoFrame {
             data: vec![color; width as usize * height as usize],
             width,
             height,
         }
     }
 
-    fn add_border(&self, border_width: u16, border_color: u8) -> GrayFrame {
+    fn add_border(&self, border_width: u16, border_color: u8) -> MonoFrame {
         let new_width = self.width + 2 * border_width;
         let new_height = self.height + 2 * border_width;
 
-        let mut with_border = GrayFrame::solid_color(new_width, new_height, border_color);
+        let mut with_border = MonoFrame::solid_color(new_width, new_height, border_color);
 
         for y in 0..self.height {
             let src_start = y as usize * self.width as usize;
@@ -215,7 +142,7 @@ impl GrayFrame {
     fn save_as(&self, filename: &str) -> GResult<()> {
         use image::{ImageBuffer, Luma};
 
-        // Create image buffer from grayscale data
+        // Create image buffer from monochromatic data
         let mut img_data = Vec::with_capacity(self.width as usize * self.height as usize);
 
         // Copy data row by row to handle stride
@@ -235,7 +162,7 @@ impl GrayFrame {
     }
 }
 
-fn get_single_channel_frames<P>(video_path: P) -> GResult<Vec<GrayFrame>>
+fn get_single_channel_frames<P>(video_path: P) -> GResult<Vec<MonoFrame>>
 where
     P: AsRef<Path>,
 {
@@ -254,18 +181,18 @@ where
         .decoder()
         .video()?;
 
-    // Set up context to convert to grayscale
-    let mut grayscale_ctx = ffmpeg::software::scaling::context::Context::get(
+    // Set up context to convert to monochromatic
+    let mut monochromatic_ctx = ffmpeg::software::scaling::context::Context::get(
         decoder.format(),
         decoder.width(),
         decoder.height(),
-        ffmpeg::format::Pixel::GRAY8, // Single channel grayscale
+        ffmpeg::format::Pixel::GRAY8, // Single channel monochromatic
         decoder.width(),
         decoder.height(),
         ffmpeg::software::scaling::flag::Flags::BILINEAR,
     )?;
 
-    let mut frames: Vec<GrayFrame> = vec![];
+    let mut frames: Vec<MonoFrame> = vec![];
 
     for (stream, packet) in input.packets() {
         if stream.index() == video_stream_index {
@@ -273,14 +200,14 @@ where
 
             let mut decoded = ffmpeg::util::frame::video::Video::empty();
             while decoder.receive_frame(&mut decoded).is_ok() {
-                let mut gray_frame = ffmpeg::util::frame::video::Video::empty();
+                let mut mono_video = ffmpeg::util::frame::video::Video::empty();
 
-                grayscale_ctx.run(&decoded, &mut gray_frame)?;
+                monochromatic_ctx.run(&decoded, &mut mono_video)?;
 
-                frames.push(GrayFrame::new(
-                    gray_frame.data(0).to_vec(), // Single channel data
-                    gray_frame.width() as u16,
-                    gray_frame.height() as u16,
+                frames.push(MonoFrame::new(
+                    mono_video.data(0).to_vec(), // Single channel data
+                    mono_video.width() as u16,
+                    mono_video.height() as u16,
                 ));
             }
         }
@@ -289,155 +216,138 @@ where
     decoder.send_eof()?;
     let mut decoded = ffmpeg::util::frame::video::Video::empty();
     while decoder.receive_frame(&mut decoded).is_ok() {
-        let mut gray_frame = ffmpeg::util::frame::video::Video::empty();
-        grayscale_ctx.run(&decoded, &mut gray_frame)?;
+        let mut mono_video = ffmpeg::util::frame::video::Video::empty();
+        monochromatic_ctx.run(&decoded, &mut mono_video)?;
 
-        frames.push(GrayFrame::new(
-            gray_frame.data(0).to_vec(),
-            gray_frame.width() as u16,
-            gray_frame.height() as u16,
+        frames.push(MonoFrame::new(
+            mono_video.data(0).to_vec(),
+            mono_video.width() as u16,
+            mono_video.height() as u16,
         ));
     }
     Ok(frames)
 }
 
-fn binary_sdf(frame: &GrayFrame) -> GrayFrame {
-    let sdf_floats = sdf_std(frame);
-    let max_value = sdf_floats
-        .iter()
-        .max_by(|a, b| a.partial_cmp(b).unwrap())
-        .unwrap();
-    let bytes: Vec<u8> = sdf_floats
-        .iter()
-        .map(|&f| ((1.0 - (f / max_value)) * 255.0).clamp(0.0, 255.0) as u8)
-        .collect();
-    GrayFrame::new(bytes, frame.width, frame.height)
-}
-
-fn sdf_std(frame: &GrayFrame) -> Vec<f32> {
-    sdf_with_threshold(frame, 127)
-}
-
-fn sdf_with_threshold(frame: &GrayFrame, threshold: u8) -> Vec<f32> {
-    assert_eq!(
-        frame.data.len(),
-        frame.width as usize * frame.height as usize
+fn binary_sdf(frame: &MonoFrame) -> MonoFrame {
+    // First, compute the normal sdf
+    let sdf_raw = chebyshev_sdf_two_pass(
+        &frame.data,
+        frame.width as usize,
+        frame.height as usize,
+        127, // Splits 0-127 & 128-255
     );
 
-    let binary_mask: Vec<bool> = frame.data.iter().map(|&pixel| pixel > threshold).collect();
+    // Then, find the `max_value` in it
+    let max_value = *sdf_raw.iter().max().unwrap();
 
-    let outside_distances = distance_transform(frame, &binary_mask, false);
-    let inside_distances = distance_transform(frame, &binary_mask, true);
-
-    let mut sdf = Vec::with_capacity(frame.width as usize * frame.height as usize);
-
-    for i in 0..frame.width as usize * frame.height as usize {
-        if binary_mask[i] {
-            sdf.push(-inside_distances[i]);
-        } else {
-            sdf.push(outside_distances[i]);
-        }
+    // If the `max_value` is 0, then use all white (as the SDF value is inverted)
+    if max_value == 0 {
+        return MonoFrame::new(vec![255; sdf_raw.len()], frame.width, frame.height);
     }
 
-    sdf
+    // Then, convert the `sdf_raw` from `usize` to `u8` by normalizing to `max_value` and clamping
+    let sdf_bytes = sdf_raw
+        .iter()
+        .map(|&val| {
+            let norm = 1.0 - (val as f32 / max_value as f32);
+            (norm * 255.0).round().clamp(0.0, 255.0) as u8
+        })
+        .collect();
+
+    // Return it as a MonoFrame
+    MonoFrame::new(sdf_bytes, frame.width, frame.height)
 }
 
-fn distance_transform(frame: &GrayFrame, binary_mask: &[bool], invert: bool) -> Vec<f32> {
-    let mut distances = vec![f32::INFINITY; frame.width as usize * frame.height as usize];
+fn chebyshev_sdf_two_pass(image: &[u8], width: usize, height: usize, threshold: u8) -> Vec<usize> {
+    let mut distance_field: Vec<usize> = vec![usize::MAX; width * height];
 
-    // Initialize distances for seed pixels (boundaries)
-    for y in 0..frame.height as usize {
-        for x in 0..frame.width as usize {
-            let idx = y * frame.width as usize + x;
-            let is_target = if invert {
-                !binary_mask[idx as usize]
-            } else {
-                binary_mask[idx as usize]
-            };
-
-            if is_target {
-                distances[idx as usize] = 0.0;
+    // Sets the distance field value at that position to 0 where the pixel value is above threshold
+    distance_field
+        .iter_mut()
+        .zip(image.iter())
+        .for_each(|(dist_val, pixel_val)| {
+            if pixel_val > &threshold {
+                *dist_val = 0;
             }
-        }
-    }
+        });
 
-    // Use Danielsson's algorithm for Euclidean distance transform
-    danielsson_edt(frame, &mut distances);
+    // Forward pass (row-wise, column-wise, diagonal-wise)
+    let mut idx = 0;
+    for y in 0..height {
+        for x in 0..width {
+            let mut curr_dist = distance_field[idx];
 
-    distances
-}
+            // Top-left Diagonal (if within bounds)
 
-/// Danielsson's Euclidean Distance Transform algorithm
-fn danielsson_edt(frame: &GrayFrame, distances: &mut [f32]) {
-    let w = frame.width as i32;
-    let h = frame.height as i32;
-
-    // Forward pass
-    for y in 0..h {
-        for x in 0..w {
-            let idx = (y * w + x) as usize;
-
-            if distances[idx] == 0.0 {
-                continue;
-            }
-
-            let mut min_dist = distances[idx];
-
-            // Check previous neighbors
-            for (dy, dx) in &[(-1, -1), (-1, 0), (-1, 1), (0, -1)] {
-                let ny = y + dy;
-                let nx = x + dx;
-
-                if ny >= 0 && ny < h && nx >= 0 && nx < w {
-                    let neighbor_idx = (ny * w + nx) as usize;
-                    let neighbor_dist = distances[neighbor_idx];
-
-                    if neighbor_dist != f32::INFINITY {
-                        let dist = neighbor_dist + distance_between(0, 0, *dx, *dy);
-                        min_dist = min_dist.min(dist);
-                    }
+            if x > 0 && y > 0 {
+                let n_dist = distance_field[idx - width - 1];
+                let new_dist = n_dist + 1;
+                if new_dist < curr_dist {
+                    curr_dist = new_dist;
                 }
             }
 
-            distances[idx] = min_dist;
-        }
-    }
-
-    // Backward pass
-    for y in (0..h).rev() {
-        for x in (0..w).rev() {
-            let idx = (y * w + x) as usize;
-
-            if distances[idx] == 0.0 {
-                continue;
-            }
-
-            let mut min_dist = distances[idx];
-
-            // Check following neighbors
-            for (dy, dx) in &[(0, 1), (1, -1), (1, 0), (1, 1)] {
-                let ny = y + dy;
-                let nx = x + dx;
-
-                if ny >= 0 && ny < h && nx >= 0 && nx < w {
-                    let neighbor_idx = (ny * w + nx) as usize;
-                    let neighbor_dist = distances[neighbor_idx];
-
-                    if neighbor_dist != f32::INFINITY {
-                        let dist = neighbor_dist + distance_between(0, 0, *dx, *dy);
-                        min_dist = min_dist.min(dist);
-                    }
+            // Top (if within bounds)
+            if y > 0 {
+                let n_dist = distance_field[idx - width];
+                let new_dist = n_dist + 1;
+                if new_dist < curr_dist {
+                    curr_dist = new_dist;
                 }
             }
 
-            distances[idx] = min_dist;
+            // Left (if within bounds)
+            if x > 0 {
+                let n_dist = distance_field[idx - 1];
+                let new_dist = n_dist + 1;
+                if new_dist < curr_dist {
+                    curr_dist = new_dist;
+                }
+            }
+
+            distance_field[idx] = curr_dist;
+            idx += 1;
         }
     }
-}
 
-#[inline]
-fn distance_between(x1: i32, y1: i32, x2: i32, y2: i32) -> f32 {
-    let dx = (x2 - x1) as f32;
-    let dy = (y2 - y1) as f32;
-    (dx * dx + dy * dy).sqrt()
+    // Backward pass (row-wise, column-wise, diagonal-wise)
+    distance_field.reverse(); // Better access pattern to reverse all at once and walk forward
+    let mut idx = 0;
+    for y in 0..height {
+        for x in 0..width {
+            let mut curr_dist = distance_field[idx];
+
+            // Reversed Top-left diagonal (Bottom-Right Diagonal) (if within bounds)
+            if x > 0 && y > 0 {
+                let n_dist = distance_field[idx - width - 1];
+                let new_dist = n_dist + 1;
+                if new_dist < curr_dist {
+                    curr_dist = new_dist;
+                }
+            }
+
+            // Reversed Top (Bottom) (if within bounds)
+            if y > 0 {
+                let n_dist = distance_field[idx - width];
+                let new_dist = n_dist + 1;
+                if new_dist < curr_dist {
+                    curr_dist = new_dist;
+                }
+            }
+
+            // Reversed Left (Right) (if within bounds)
+            if x > 0 {
+                let n_dist = distance_field[idx - 1];
+                let new_dist = n_dist + 1;
+                if new_dist < curr_dist {
+                    curr_dist = new_dist;
+                }
+            }
+
+            distance_field[idx] = curr_dist;
+            idx += 1;
+        }
+    }
+    distance_field.reverse();
+    distance_field
 }
