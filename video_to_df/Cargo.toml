@@ -10,6 +10,7 @@ flate2 = "1.1.2"
 base64 = "0.22.1"
 serde_json = { version = "1.0.143", features = ["preserve_order"] }
 rayon = "1.11.0"
+anyhow = "1.0.99"
 
 [dev-dependencies]
 criterion = "0.7.0"

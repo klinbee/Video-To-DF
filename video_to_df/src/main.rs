@@ -4,20 +4,155 @@ use ffmpeg_next as ffmpeg;
 use flate2::Compression;
 use flate2::write::ZlibEncoder;
 use serde_json::json;
+use std::error::Error;
 use std::io::Write;
-use std::path::Path;
-use std::{fs, usize};
+use std::path::{self, Path, PathBuf};
+use std::{env, fs, usize};
 
-// Generic Result
-type GResult<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
-fn main() -> GResult<()> {
+// command objectives
+// v2df init
+// v2df new
+// v2df run
+// v2df test --single_frame frame_num
+//
+//
+// v2df_config.json objectives
+/*
+//// DEPRECATED
+{
+  "projects": [
+    {
+      "video_file": "Bad_Apple.mp4", // Relative or.. global?
+      "border_width": 32, // u16, optional
+      "border_color": 255, // u8, optional
+      "frame_start": 43, // u32, optional
+      "frame_dfs_directory": "frames",
+      "frame_df_type_name": "moredfs:single_channel_image_tessellation", // optional
+      "frame_df_width_field": "x_size", // optional
+      "frame_df_height_field": "z_size", // optional
+      "frame_df_data_field": "deflated_frame_data", // optional
+      "grid_df_directory": "", // optional
+      "grid_df_type_name": "moredfs:gapped_grid_square_spiral", // optional
+      "grid_df_spacing_field": "spacing", // optional
+      "grid_df_width_field": "x_size", // optional
+      "grid_df_height_field": "z_size", // optional
+      "grid_df_oob_field": "out_of_bounds_argument", // optional
+      "grid_df_cell_entries_field": "grid_cell_args" // optional
+    }
+  ]
+}
+/// DEPRECATED
+
+{
+  "video_file": "Bad_Apple.mp4", // Relative or.. global? /NON-DEFAULT!!
+  "output_dir": "" // Relative or.. global? / default
+  "projects": [
+    {
+      "border_width": 32, // u16, default
+      "border_color": 255, // u8, default
+      "invert_colors": true, // bool, default
+      "frame_start": 0, // u32, default
+      "frame_dfs_dir": "frames", // default
+      "grid_df_dir": "", // default
+    },
+    {
+      "border_width": 32, // u16, default
+      "border_color": 255, // u8, default
+      "invert_colors": true, // bool, default
+      "frame_start": 43, // u32, default
+      "frame_dfs_dir": "frames", // default
+      "grid_df_dir": "", // default
+    },
+  ]
+}
+
+MY GOAL specifically is so future projects can be made more easily
+My goal is so current projects can use one command to be created
+My goal is to be able to data-drive this project to make it easier on myself
+
+
+WHAT DO I NEVER WANT TO CHANGE UNLESS IT IS A CODE ISSUE:
+- json file formats (probably set in stone)
+*/
+
+struct Config {
+    video_file: PathBuf,
+    output_root_dir: PathBuf,
+    projects: Vec<ProjectConfig>,
+}
+
+struct ProjectConfig {
+    border_width: u16,
+    border_color: u8,
+    invert_colors: bool,
+    frame_start: u32,
+    frame_dfs_dir: PathBuf,
+    grid_df_dir: PathBuf,
+}
+
+enum Command {
+    Init,
+    New(PathBuf),
+    Run(Option<PathBuf>),
+}
+
+impl Command {
+    fn parse() -> Result<Self> {
+        let mut args = env::args().skip(1);
+
+        let command = args.next().ok_or("Please provide a command!")?;
+
+        match command.as_str() {
+            "init" => Ok(Command::Init),
+            "new" => {
+                let project_dir = args
+                    .next()
+                    .ok_or("'new' command requires a project directory")?;
+                Ok(Command::New(PathBuf::from(project_dir)))
+            }
+            "run" => Ok(Command::Run(args.next().map(PathBuf::from))),
+            _ => Err(format!("Unknown command: {}", command).into()),
+        }
+    }
+
+    fn execute(self) -> Result<()> {
+        match self {
+            Self::Init => self.init(),
+            Self::New(path) => self.new(path),
+            Self::Run(path) => self.run(path),
+        }
+    }
+
+    fn init(self) -> Result<()> {
+        self.new(env::current_dir()?)
+    }
+
+    fn new(self, path: PathBuf) -> Result<()> {
+        println!("Creating project at: {:?}", path);
+    }
+
+    fn run(self, path: Option<PathBuf>) -> Result<()> {
+        let path = match path {
+            Some(path) => path,
+            None => env::current_dir()?,
+        };
+        println!("Attempting to run v2df in directory: {:?}", path);
+        path.push("v2df_config.json");
+        if path.exists() && path.is_file() {
+            //read file
+        }
+    }
+}
+
+fn main() -> Result<()> {
     let frames = get_single_channel_frames("Bad_Apple!!.mp4")?;
     single_frame_test(frames, 1337)
 }
 
-fn single_frame_test(frames: Vec<MonoFrame>, target_frame: usize) -> GResult<()> {
-    let my_frame = frames.get(target_frame).ok_or("Frame not found!")?;
+fn single_frame_test(frames: Vec<MonoFrame>, target_frame: usize) -> Result<()> {
+    let my_frame = frames.get(target_frame).context("Frame not found!")?;
     my_frame.save_as(&format!("frame_{}.png", target_frame))?;
 
     let grad_frame = binary_sdf(&my_frame.add_border(30, 255));
@@ -41,7 +176,7 @@ fn single_frame_test(frames: Vec<MonoFrame>, target_frame: usize) -> GResult<()>
     Ok(())
 }
 
-fn write_all_frames_to<P>(frames: Vec<MonoFrame>, path: P) -> GResult<()>
+fn write_all_frames_to<P>(frames: Vec<MonoFrame>, path: P) -> Result<()>
 where
     P: AsRef<Path>,
 {
@@ -71,7 +206,7 @@ where
     Ok(())
 }
 
-fn write_grid_json<P>(frame_count: usize, x_size: usize, z_size: usize, path: P) -> GResult<()>
+fn write_grid_json<P>(frame_count: usize, x_size: usize, z_size: usize, path: P) -> Result<()>
 where
     P: AsRef<Path>,
 {
@@ -92,7 +227,7 @@ where
     Ok(())
 }
 
-fn compress_zlib(bytes: &[u8]) -> GResult<Vec<u8>> {
+fn compress_zlib(bytes: &[u8]) -> Result<Vec<u8>> {
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::fast());
     encoder.write_all(bytes)?;
     Ok(encoder.finish()?)
@@ -139,7 +274,7 @@ impl MonoFrame {
         with_border
     }
 
-    fn save_as(&self, filename: &str) -> GResult<()> {
+    fn save_as(&self, filename: &str) -> Result<()> {
         use image::{ImageBuffer, Luma};
 
         // Create image buffer from monochromatic data
@@ -154,7 +289,7 @@ impl MonoFrame {
 
         let img: ImageBuffer<Luma<u8>, Vec<u8>> =
             ImageBuffer::from_raw(self.width as u32, self.height as u32, img_data)
-                .ok_or("Failed to create image buffer")?;
+                .context("Failed to create image buffer")?;
 
         img.save(filename)?;
         println!("Saved PNG to {}", filename);
@@ -162,7 +297,7 @@ impl MonoFrame {
     }
 }
 
-fn get_single_channel_frames<P>(video_path: P) -> GResult<Vec<MonoFrame>>
+fn get_single_channel_frames<P>(video_path: P) -> Result<Vec<MonoFrame>>
 where
     P: AsRef<Path>,
 {
@@ -173,7 +308,7 @@ where
     let video_stream = input
         .streams()
         .best(ffmpeg::media::Type::Video)
-        .ok_or("No video stream found")?;
+        .context("No video stream found")?;
 
     let video_stream_index = video_stream.index();
 
