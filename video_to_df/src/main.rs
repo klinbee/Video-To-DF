@@ -6,7 +6,7 @@ use flate2::write::ZlibEncoder;
 use serde_json::json;
 use std::error::Error;
 use std::io::Write;
-use std::path::{self, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::{env, fs, usize};
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
@@ -119,22 +119,19 @@ impl Command {
 
     fn execute(self) -> Result<()> {
         match self {
-            Self::Init => self.init(),
-            Self::New(path) => self.new(path),
-            Self::Run(path) => self.run(path),
+            Self::Init => Self::new(env::current_dir()?),
+            Self::New(path) => Self::new(path),
+            Self::Run(path) => Self::run(path),
         }
     }
 
-    fn init(self) -> Result<()> {
-        self.new(env::current_dir()?)
-    }
-
-    fn new(self, path: PathBuf) -> Result<()> {
+    fn new(path: PathBuf) -> Result<()> {
         println!("Creating project at: {:?}", path);
+        todo!()
     }
 
-    fn run(self, path: Option<PathBuf>) -> Result<()> {
-        let path = match path {
+    fn run(path: Option<PathBuf>) -> Result<()> {
+        let mut path = match path {
             Some(path) => path,
             None => env::current_dir()?,
         };
@@ -143,6 +140,7 @@ impl Command {
         if path.exists() && path.is_file() {
             //read file
         }
+        todo!()
     }
 }
 
@@ -152,7 +150,7 @@ fn main() -> Result<()> {
 }
 
 fn single_frame_test(frames: Vec<MonoFrame>, target_frame: usize) -> Result<()> {
-    let my_frame = frames.get(target_frame).context("Frame not found!")?;
+    let my_frame = frames.get(target_frame).expect("Frame not found!");
     my_frame.save_as(&format!("frame_{}.png", target_frame))?;
 
     let grad_frame = binary_sdf(&my_frame.add_border(30, 255));
@@ -289,7 +287,7 @@ impl MonoFrame {
 
         let img: ImageBuffer<Luma<u8>, Vec<u8>> =
             ImageBuffer::from_raw(self.width as u32, self.height as u32, img_data)
-                .context("Failed to create image buffer")?;
+                .expect("Failed to create image buffer");
 
         img.save(filename)?;
         println!("Saved PNG to {}", filename);
@@ -308,7 +306,7 @@ where
     let video_stream = input
         .streams()
         .best(ffmpeg::media::Type::Video)
-        .context("No video stream found")?;
+        .expect("No video stream found");
 
     let video_stream_index = video_stream.index();
 
@@ -406,6 +404,16 @@ fn chebyshev_sdf_two_pass(image: &[u8], width: usize, height: usize, threshold: 
             }
         });
 
+    chebyshev_sdf_forward_pass(&mut distance_field, width, height);
+    // Better access pattern to reverse all at once and walk forward
+    distance_field.reverse();
+    chebyshev_sdf_forward_pass(&mut distance_field, width, height);
+    // Change to normal order
+    distance_field.reverse();
+    distance_field
+}
+
+fn chebyshev_sdf_forward_pass(distance_field: &mut Vec<usize>, width: usize, height: usize) {
     // Forward pass (row-wise, column-wise, diagonal-wise)
     let mut idx = 0;
     for y in 0..height {
@@ -444,45 +452,4 @@ fn chebyshev_sdf_two_pass(image: &[u8], width: usize, height: usize, threshold: 
             idx += 1;
         }
     }
-
-    // Backward pass (row-wise, column-wise, diagonal-wise)
-    distance_field.reverse(); // Better access pattern to reverse all at once and walk forward
-    let mut idx = 0;
-    for y in 0..height {
-        for x in 0..width {
-            let mut curr_dist = distance_field[idx];
-
-            // Reversed Top-left diagonal (Bottom-Right Diagonal) (if within bounds)
-            if x > 0 && y > 0 {
-                let n_dist = distance_field[idx - width - 1];
-                let new_dist = n_dist + 1;
-                if new_dist < curr_dist {
-                    curr_dist = new_dist;
-                }
-            }
-
-            // Reversed Top (Bottom) (if within bounds)
-            if y > 0 {
-                let n_dist = distance_field[idx - width];
-                let new_dist = n_dist + 1;
-                if new_dist < curr_dist {
-                    curr_dist = new_dist;
-                }
-            }
-
-            // Reversed Left (Right) (if within bounds)
-            if x > 0 {
-                let n_dist = distance_field[idx - 1];
-                let new_dist = n_dist + 1;
-                if new_dist < curr_dist {
-                    curr_dist = new_dist;
-                }
-            }
-
-            distance_field[idx] = curr_dist;
-            idx += 1;
-        }
-    }
-    distance_field.reverse();
-    distance_field
 }
