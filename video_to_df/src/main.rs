@@ -77,13 +77,15 @@ WHAT DO I NEVER WANT TO CHANGE UNLESS IT IS A CODE ISSUE:
 - json file formats (probably set in stone)
 */
 
-struct Config {
+struct Config
+{
     video_file: PathBuf,
     output_root_dir: PathBuf,
     projects: Vec<ProjectConfig>,
 }
 
-struct ProjectConfig {
+struct ProjectConfig
+{
     border_width: u16,
     border_color: u8,
     invert_colors: bool,
@@ -92,14 +94,17 @@ struct ProjectConfig {
     grid_df_dir: PathBuf,
 }
 
-enum Command {
+enum Command
+{
     Init,
     New(PathBuf),
     Run(Option<PathBuf>),
 }
 
-impl Command {
-    fn parse() -> Result<Self> {
+impl Command
+{
+    fn parse() -> Result<Self>
+    {
         let mut args = env::args().skip(1);
 
         let command = args.next().ok_or("Please provide a command!")?;
@@ -117,7 +122,8 @@ impl Command {
         }
     }
 
-    fn execute(self) -> Result<()> {
+    fn execute(self) -> Result<()>
+    {
         match self {
             Self::Init => Self::new(env::current_dir()?),
             Self::New(path) => Self::new(path),
@@ -125,12 +131,14 @@ impl Command {
         }
     }
 
-    fn new(path: PathBuf) -> Result<()> {
+    fn new(path: PathBuf) -> Result<()>
+    {
         println!("Creating project at: {:?}", path);
         todo!()
     }
 
-    fn run(path: Option<PathBuf>) -> Result<()> {
+    fn run(path: Option<PathBuf>) -> Result<()>
+    {
         let mut path = match path {
             Some(path) => path,
             None => env::current_dir()?,
@@ -144,12 +152,14 @@ impl Command {
     }
 }
 
-fn main() -> Result<()> {
+fn main() -> Result<()>
+{
     let frames = get_single_channel_frames("Bad_Apple!!.mp4")?;
     single_frame_test(frames, 1337)
 }
 
-fn single_frame_test(frames: Vec<MonoFrame>, target_frame: usize) -> Result<()> {
+fn single_frame_test(frames: Vec<MonoFrame>, target_frame: usize) -> Result<()>
+{
     let my_frame = frames.get(target_frame).expect("Frame not found!");
     my_frame.save_as(&format!("frame_{}.png", target_frame))?;
 
@@ -225,20 +235,24 @@ where
     Ok(())
 }
 
-fn compress_zlib(bytes: &[u8]) -> Result<Vec<u8>> {
+fn compress_zlib(bytes: &[u8]) -> Result<Vec<u8>>
+{
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::fast());
     encoder.write_all(bytes)?;
     Ok(encoder.finish()?)
 }
 
-pub struct MonoFrame {
+pub struct MonoFrame
+{
     data: Vec<u8>,
     width: u16,
     height: u16,
 }
 
-impl MonoFrame {
-    fn new(data: Vec<u8>, width: u16, height: u16) -> MonoFrame {
+impl MonoFrame
+{
+    fn new(data: Vec<u8>, width: u16, height: u16) -> MonoFrame
+    {
         MonoFrame {
             data: data,
             width,
@@ -246,7 +260,8 @@ impl MonoFrame {
         }
     }
 
-    fn solid_color(width: u16, height: u16, color: u8) -> MonoFrame {
+    fn solid_color(width: u16, height: u16, color: u8) -> MonoFrame
+    {
         MonoFrame {
             data: vec![color; width as usize * height as usize],
             width,
@@ -254,7 +269,8 @@ impl MonoFrame {
         }
     }
 
-    fn add_border(&self, border_width: u16, border_color: u8) -> MonoFrame {
+    fn add_border(&self, border_width: u16, border_color: u8) -> MonoFrame
+    {
         let new_width = self.width + 2 * border_width;
         let new_height = self.height + 2 * border_width;
 
@@ -272,7 +288,8 @@ impl MonoFrame {
         with_border
     }
 
-    fn save_as(&self, filename: &str) -> Result<()> {
+    fn save_as(&self, filename: &str) -> Result<()>
+    {
         use image::{ImageBuffer, Luma};
 
         // Create image buffer from monochromatic data
@@ -361,7 +378,8 @@ where
     Ok(frames)
 }
 
-fn binary_sdf(frame: &MonoFrame) -> MonoFrame {
+fn binary_sdf(frame: &MonoFrame) -> MonoFrame
+{
     // First, compute the normal sdf
     let sdf_raw = chebyshev_sdf_two_pass(
         &frame.data,
@@ -391,7 +409,8 @@ fn binary_sdf(frame: &MonoFrame) -> MonoFrame {
     MonoFrame::new(sdf_bytes, frame.width, frame.height)
 }
 
-fn chebyshev_sdf_two_pass(image: &[u8], width: usize, height: usize, threshold: u8) -> Vec<usize> {
+fn chebyshev_sdf_two_pass(image: &[u8], width: usize, height: usize, threshold: u8) -> Vec<usize>
+{
     let mut distance_field: Vec<usize> = vec![usize::MAX; width * height];
 
     // Sets the distance field value at that position to 0 where the pixel value is above threshold
@@ -413,7 +432,8 @@ fn chebyshev_sdf_two_pass(image: &[u8], width: usize, height: usize, threshold: 
     distance_field
 }
 
-fn chebyshev_sdf_forward_pass(distance_field: &mut Vec<usize>, width: usize, height: usize) {
+fn chebyshev_sdf_forward_pass(distance_field: &mut Vec<usize>, width: usize, height: usize)
+{
     // Forward pass (row-wise, column-wise, diagonal-wise)
     let mut idx = 0;
     for y in 0..height {
