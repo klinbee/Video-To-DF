@@ -43,7 +43,6 @@ type Result<T> = std::result::Result<T, Box<dyn Error>>;
 // v2df help / --help / -h
 // v2df test --single_frame frame_num
 impl Error for CliError {}
-impl Error for IoError {}
 impl Error for ImplError {}
 
 #[derive(Debug)]
@@ -96,32 +95,15 @@ impl std::fmt::Display for CliError
 }
 
 #[derive(Debug)]
-enum IoError
-{
-    FileCompression,
-}
-
-impl std::fmt::Display for IoError
-{
-    fn fmt(
-        &self,
-        f: &mut std::fmt::Formatter,
-    ) -> std::fmt::Result
-    {
-        match self
-        {
-            Self::FileCompression => write!(f, "Failed during zlib compression step..."),
-        }
-    }
-}
-
-#[derive(Debug)]
 enum ImplError
 {
     AccessProjectConfig,
     ImageCreation,
     ImageSaving,
     JsonPrettifier,
+    FileCompression(io::Error),
+    FetchVideoStream,
+    FFmpeg(ffmpeg::Error),
 }
 
 impl std::fmt::Display for ImplError
@@ -140,6 +122,12 @@ impl std::fmt::Display for ImplError
             Self::ImageCreation => write!(f, "Somehow failed to create image"),
             Self::ImageSaving => write!(f, "Somehow failed to save image"),
             Self::JsonPrettifier => write!(f, "Somehow failed to prettify the output JSON"),
+            Self::FileCompression(e) =>
+            {
+                write!(f, "Somnehow failed during zlib compression: {}", e)
+            },
+            Self::FetchVideoStream => write!(f, "Somehow failed to fetch video stream"),
+            Self::FFmpeg(e) => write!(f, "Somehow failed during video processing: {}", e),
         }
     }
 }
@@ -402,7 +390,7 @@ fn compress_zlib(bytes: &[u8]) -> Result<Vec<u8>>
         Ok(encoder.finish()?)
     };
 
-    result.map_err(|_| IoError::FileCompression.into())
+    result.map_err(|_| ImplError::FileCompression.into())
 }
 
 pub struct MonoFrame
@@ -499,13 +487,15 @@ where
     let mut input = ffmpeg::format::input(video_path.as_ref())?;
 
     let video_stream =
-        input.streams().best(ffmpeg::media::Type::Video).expect("No video stream found");
+        input.streams().best(ffmpeg::media::Type::Video).ok_or(ImplError::FetchVideoStream)?;
 
     let video_stream_index = video_stream.index();
 
-    let mut decoder = ffmpeg::codec::context::Context::from_parameters(video_stream.parameters())?
+    let mut decoder = ffmpeg::codec::context::Context::from_parameters(video_stream.parameters())
+        .map_err(|e| ImplError::FFmpeg(e))?
         .decoder()
-        .video()?;
+        .video()
+        .map_err(|e| ImplError::FFmpeg(e))?;
 
     // Set up context to convert to monochromatic
     let mut monochromatic_ctx = ffmpeg::software::scaling::context::Context::get(
@@ -516,7 +506,8 @@ where
         decoder.width(),
         decoder.height(),
         ffmpeg::software::scaling::flag::Flags::BILINEAR,
-    )?;
+    )
+    .map_err(|e| ImplError::FFmpeg(e))?;
 
     let mut frames: Vec<MonoFrame> = vec![];
 
@@ -524,7 +515,7 @@ where
     {
         if stream.index() == video_stream_index
         {
-            decoder.send_packet(&packet)?;
+            decoder.send_packet(&packet).map_err(|e| ImplError::FFmpeg(e))?;
 
             let mut decoded = ffmpeg::util::frame::video::Video::empty();
             while decoder.receive_frame(&mut decoded).is_ok()
@@ -542,12 +533,12 @@ where
         }
     }
     // Flush decoder (could be storing extra frames)
-    decoder.send_eof()?;
+    decoder.send_eof().map_err(|e| ImplError::FFmpeg(e))?;
     let mut decoded = ffmpeg::util::frame::video::Video::empty();
     while decoder.receive_frame(&mut decoded).is_ok()
     {
         let mut mono_video = ffmpeg::util::frame::video::Video::empty();
-        monochromatic_ctx.run(&decoded, &mut mono_video)?;
+        monochromatic_ctx.run(&decoded, &mut mono_video).map_err(|e| ImplError::FFmpeg(e))?;
 
         frames.push(MonoFrame::new(
             mono_video.data(0).to_vec(),
@@ -569,7 +560,7 @@ fn binary_sdf(frame: &MonoFrame) -> MonoFrame
     );
 
     // Then, find the `max_value` in it
-    let max_value: usize = *sdf_raw.iter().max().unwrap_or(&0);
+    let max_value: usize = *sdf_raw.iter().max().expect("SDF Raw should never have size 0");
 
     // If the `max_value` is 0, then use all white (as the SDF value is inverted)
     if max_value == 0
