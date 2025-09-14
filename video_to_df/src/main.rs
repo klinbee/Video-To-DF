@@ -66,6 +66,7 @@ impl std::fmt::Display for CliError
         f: &mut std::fmt::Formatter,
     ) -> std::fmt::Result
     {
+        write!(f, "v2df: ")?;
         match self
         {
             Self::NoCommand => write!(f, "Type --help for usage"),
@@ -99,7 +100,8 @@ impl std::fmt::Display for CliError
                     test_frame, frame_count
                 )
             },
-        }
+        }?;
+        writeln!(f)
     }
 }
 
@@ -124,6 +126,7 @@ impl std::fmt::Display for ImplError
         f: &mut std::fmt::Formatter,
     ) -> std::fmt::Result
     {
+        write!(f, "v2df: ")?;
         match self
         {
             Self::AccessProjectConfig =>
@@ -147,7 +150,8 @@ impl std::fmt::Display for ImplError
             {
                 write!(f, "Somehow failed to create directory during output: {}", e)
             },
-        }
+        }?;
+        writeln!(f)
     }
 }
 
@@ -282,7 +286,19 @@ impl std::fmt::Display for Command
     }
 }
 
-fn main() -> Result<()>
+fn main()
+{
+    match run()
+    {
+        Ok(()) => (),
+        Err(e) =>
+        {
+            eprint!("{}", e);
+        },
+    }
+}
+
+fn run() -> Result<()>
 {
     let mut args = env::args().skip(1);
 
