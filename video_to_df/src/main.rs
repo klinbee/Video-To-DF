@@ -165,14 +165,12 @@ struct ProjectConfig
 enum Command
 {
     Init,
-    New,
     Run,
 }
 
 impl Command
 {
     const INIT: &'static str = "init";
-    const NEW: &'static str = "new";
     const RUN: &'static str = "run";
 
     fn name(&self) -> &'static str
@@ -180,7 +178,6 @@ impl Command
         match self
         {
             Command::Init => Self::INIT,
-            Command::New => Self::NEW,
             Command::Run => Self::RUN,
         }
     }
@@ -190,7 +187,6 @@ impl Command
         match name
         {
             Self::INIT => Some(Command::Init),
-            Self::NEW => Some(Command::New),
             Self::RUN => Some(Command::Run),
             _ => None,
         }
@@ -203,28 +199,30 @@ impl Command
     {
         match self
         {
-            Command::Init => Self::execute_new(&env::current_dir()?),
-            Command::New =>
-            {
-                let project_dir = args
-                    .next()
-                    .ok_or(CliError::MissingArg(Command::New, "project directory".to_string()))?;
-                Self::execute_new(&PathBuf::from(project_dir))
-            },
+            Command::Init => Self::execute_init(args.next().map(PathBuf::from)),
             Command::Run => Self::execute_run(args.next().map(PathBuf::from)),
         }
     }
 
-    fn execute_new(path: &Path) -> Result<()>
+    fn get_path_or_curr_dir(path: Option<PathBuf>) -> Result<PathBuf>
     {
+        match path
+        {
+            None => env::current_dir().map_err(|_| CliError::AccessCurrentDirectory.into()),
+            Some(path) => Ok(path),
+        }
+    }
+
+    fn execute_init(path: Option<PathBuf>) -> Result<()>
+    {
+        let path = Self::get_path_or_curr_dir(path)?;
         println!("Creating project at: {:?}", path);
         todo!()
     }
 
     fn execute_run(path: Option<PathBuf>) -> Result<()>
     {
-        let path =
-            path.or_else(|| env::current_dir().ok()).ok_or(CliError::AccessCurrentDirectory)?;
+        let path = Self::get_path_or_curr_dir(path)?;
         println!("Attempting to run v2df in directory: {:?}", path);
         let config_file = Self::get_config_file(&path)?;
         let config_str =
