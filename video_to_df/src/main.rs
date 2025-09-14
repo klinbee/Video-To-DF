@@ -100,9 +100,11 @@ enum ImplError
     AccessProjectConfig,
     ImageCreation,
     ImageSaving,
-    JsonPrettifier,
+    JsonPrettifier(serde_json::Error),
     FileCompression(io::Error),
+    FileWrite(io::Error),
     FetchVideoStream,
+    CreateDirectory(io::Error),
     FFmpeg(ffmpeg::Error),
 }
 
@@ -121,13 +123,21 @@ impl std::fmt::Display for ImplError
             },
             Self::ImageCreation => write!(f, "Somehow failed to create image"),
             Self::ImageSaving => write!(f, "Somehow failed to save image"),
-            Self::JsonPrettifier => write!(f, "Somehow failed to prettify the output JSON"),
+            Self::JsonPrettifier(e) =>
+            {
+                write!(f, "Somehow failed to prettify the output JSON: {}", e)
+            },
             Self::FileCompression(e) =>
             {
                 write!(f, "Somnehow failed during zlib compression: {}", e)
             },
             Self::FetchVideoStream => write!(f, "Somehow failed to fetch video stream"),
             Self::FFmpeg(e) => write!(f, "Somehow failed during video processing: {}", e),
+            Self::FileWrite(e) => write!(f, "Somehow failed to write file during output: {}", e),
+            Self::CreateDirectory(e) =>
+            {
+                write!(f, "Somehow failed to create directory during output: {}", e)
+            },
         }
     }
 }
@@ -259,46 +269,13 @@ fn main() -> Result<()>
     command.execute(args)
 }
 
-// let frames = get_single_channel_frames("Bad_Apple!!.mp4")?;
-// single_frame_test(frames, 1337)
-
-fn single_frame_test(
-    frames: Vec<MonoFrame>,
-    target_frame: usize,
-) -> Result<()>
-{
-    let my_frame = frames.get(target_frame).expect("Frame not found!");
-    my_frame.save_as(&format!("frame_{}.png", target_frame))?;
-
-    let grad_frame = binary_sdf(&my_frame.add_border(30, 255));
-
-    grad_frame.save_as(&format!("frame_grad_{}.png", target_frame))?;
-
-    let deflated_grad_frame = compress_zlib(&grad_frame.data)?;
-    let encoded_deflated_grad_frame_data = general_purpose::STANDARD.encode(&deflated_grad_frame);
-    let frame_json = json!(
-        {
-            "type": "moredfs:single_channel_image_tessellation",
-            "x_size": grad_frame.width,
-            "z_size": grad_frame.height,
-            "deflated_frame_data": encoded_deflated_grad_frame_data
-        }
-    );
-
-    let frame_json_string =
-        serde_json::to_string_pretty(&frame_json).map_err(|_| ImplError::JsonPrettifier)?;
-
-    fs::write("frame.json", &frame_json_string)?;
-    Ok(())
-}
-
 fn write_projects_from_config(
     frames: Vec<MonoFrame>,
     config: Config,
 ) -> Result<()>
 {
     let num_projects = config.projects.len();
-    fs::create_dir_all(&config.output_root_dir)?;
+    fs::create_dir_all(&config.output_root_dir).map_err(|e| ImplError::CreateDirectory(e))?;
     for n in 0..num_projects
     {
         write_project_n_from_config(&frames, n, &config)?;
@@ -330,6 +307,8 @@ fn write_json_frames_from_config(
 ) -> Result<()>
 {
     let frame_start = project_config.frame_start;
+    let curr_dir = root_dir.join(&project_config.frame_dfs_dir);
+    fs::create_dir_all(&curr_dir).map_err(|e| ImplError::CreateDirectory(e))?;
     for (index, frame) in (frame_start..).zip(frames.iter().skip(frame_start as usize - 1))
     {
         let grad_frame =
@@ -345,11 +324,13 @@ fn write_json_frames_from_config(
                 "deflated_frame_data": encoded_deflated_grad_frame_data
             }
         );
-        let frame_json_string = serde_json::to_string_pretty(&frame_json)?;
+        let frame_json_string =
+            serde_json::to_string_pretty(&frame_json).map_err(|e| ImplError::JsonPrettifier(e))?;
         fs::write(
             root_dir.join(&project_config.frame_dfs_dir).join(&format!("frame_{}.json", index)),
             &frame_json_string,
-        )?;
+        )
+        .map_err(|e| ImplError::FileWrite(e))?;
     }
     Ok(())
 }
@@ -362,6 +343,8 @@ fn write_json_grid_from_config(
     project_config: &ProjectConfig,
 ) -> Result<()>
 {
+    let curr_dir = root_dir.join(&project_config.grid_df_dir);
+    fs::create_dir_all(&curr_dir).map_err(|e| ImplError::CreateDirectory(e))?;
     let frame_json = json!(
         {
             "type": "moredfs:gapped_grid_square_spiral",
@@ -374,23 +357,19 @@ fn write_json_grid_from_config(
                 .collect::<Vec<_>>()
         }
     );
-    let frame_json_string = serde_json::to_string_pretty(&frame_json)?;
-    fs::write(
-        root_dir.join(&project_config.grid_df_dir).join("all_frames.json"),
-        &frame_json_string,
-    )?;
+    let frame_json_string =
+        serde_json::to_string_pretty(&frame_json).map_err(|e| ImplError::JsonPrettifier(e))?;
+    fs::write(curr_dir.join("all_frames.json"), &frame_json_string)
+        .map_err(|e| ImplError::FileWrite(e))?;
     Ok(())
 }
 
 fn compress_zlib(bytes: &[u8]) -> Result<Vec<u8>>
 {
-    let result: Result<Vec<u8>> = {
-        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::fast());
-        encoder.write_all(bytes)?;
-        Ok(encoder.finish()?)
-    };
-
-    result.map_err(|_| ImplError::FileCompression.into())
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(bytes).map_err(|e| ImplError::FileCompression(e))?;
+    let compressed_bytes = encoder.finish().map_err(|e| ImplError::FileCompression(e))?;
+    Ok(compressed_bytes)
 }
 
 pub struct MonoFrame
@@ -482,9 +461,9 @@ fn get_single_channel_frames<P>(video_path: P) -> Result<Vec<MonoFrame>>
 where
     P: AsRef<Path>,
 {
-    ffmpeg::init()?;
+    ffmpeg::init().map_err(|e| ImplError::FFmpeg(e))?;
 
-    let mut input = ffmpeg::format::input(video_path.as_ref())?;
+    let mut input = ffmpeg::format::input(video_path.as_ref()).map_err(|e| ImplError::FFmpeg(e))?;
 
     let video_stream =
         input.streams().best(ffmpeg::media::Type::Video).ok_or(ImplError::FetchVideoStream)?;
@@ -522,7 +501,9 @@ where
             {
                 let mut mono_video = ffmpeg::util::frame::video::Video::empty();
 
-                monochromatic_ctx.run(&decoded, &mut mono_video)?;
+                monochromatic_ctx
+                    .run(&decoded, &mut mono_video)
+                    .map_err(|e| ImplError::FFmpeg(e))?;
 
                 frames.push(MonoFrame::new(
                     mono_video.data(0).to_vec(), // Single channel data
