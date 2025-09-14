@@ -54,9 +54,9 @@ enum CliError
     ConfigNotFound(PathBuf),
     ConfigRead(io::Error),
     ConfigParse(serde_json::Error),
-    InvalidFrameRange((NonZeroU32, NonZeroU32), usize),
+    InvalidFrameRange((usize, usize), usize),
     AccessCurrentDirectory,
-    InvalidTestFrame(NonZeroU32, usize),
+    InvalidTestFrame(usize, usize),
 }
 
 impl std::fmt::Display for CliError
@@ -168,12 +168,41 @@ struct ProjectConfig
 {
     border_width: u16,
     border_color: u8,
-    invert_colors: bool,
-    frame_start: NonZeroU32,
-    frame_end: NonZeroU32,
+    invert_colors: Option<bool>,
+    frame_start: Option<NonZeroU32>,
+    frame_end: Option<NonZeroU32>,
     frame_dfs_dir: PathBuf,
     grid_df_dir: PathBuf,
-    test_frame: NonZeroU32,
+    test_frame: Option<NonZeroU32>,
+}
+
+impl Default for Config
+{
+    fn default() -> Self
+    {
+        Self {
+            video_file: PathBuf::from("input.mp4"),
+            output_root_dir: PathBuf::from("./output"),
+            projects: vec![ProjectConfig::default()],
+        }
+    }
+}
+
+impl Default for ProjectConfig
+{
+    fn default() -> Self
+    {
+        Self {
+            border_width: 32,
+            border_color: 255, // white
+            invert_colors: None,
+            frame_start: Some(NonZeroU32::new(1).unwrap()),
+            frame_end: None,
+            frame_dfs_dir: PathBuf::from("./frames"),
+            grid_df_dir: PathBuf::from("./"),
+            test_frame: Some(NonZeroU32::new(1).unwrap()),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -334,16 +363,36 @@ fn write_project_n_from_config(
     let root_dir = &config.output_root_dir;
     let frame_dir = root_dir.join(&project_config.frame_dfs_dir);
     let grid_dir = root_dir.join(&project_config.grid_df_dir);
-    let frame_range = (project_config.frame_start, project_config.frame_end);
+
+    let index_start = match project_config.frame_start
+    {
+        None => 0,
+        Some(frame_start) => (frame_start.get() - 1) as usize,
+    };
+    let index_end = match project_config.frame_end
+    {
+        None => frames.len(),
+        Some(frame_start) => (frame_start.get() - 1) as usize,
+    };
+
+    if index_start.min(index_end) > frames.len()
+    {
+        return Err(
+            CliError::InvalidFrameRange((index_start + 1, index_end + 1), frames.len()).into()
+        );
+    }
+
+    let index_range = (index_start, index_end);
+
     write_json_frames(
         frames,
         frame_dim,
-        frame_range,
+        index_range,
         project_config.border_width,
         project_config.border_color,
         &frame_dir,
     )?;
-    write_json_grid(frame_range, frame_dim, &grid_dir)?;
+    write_json_grid(index_range, frame_dim, &grid_dir)?;
     Ok(())
 }
 
@@ -372,14 +421,22 @@ fn test_project_n_from_config(
     let root_dir = &config.output_root_dir;
     let frame_dir = root_dir.join(&project_config.frame_dfs_dir);
     let grid_dir = root_dir.join(&project_config.grid_df_dir);
-    let frame_range = (project_config.test_frame, project_config.test_frame.saturating_add(1));
-    let test_frame = project_config.test_frame.get() as usize;
+
+    let test_frame_index = match project_config.test_frame
+    {
+        None => 0,
+        Some(test_frame) => test_frame.get() as usize,
+    };
+
     let target_frame = frames
-        .get(test_frame)
-        .ok_or(CliError::InvalidTestFrame(project_config.test_frame, frames.len()))?;
-    target_frame.save_as(&format!("test_frame_{}.png", test_frame))?;
+        .get(test_frame_index)
+        .ok_or(CliError::InvalidTestFrame(test_frame_index + 1, frames.len()))?;
+
+    let frame_range = (test_frame_index, test_frame_index + 1);
+
+    target_frame.save_as(&root_dir.join(&format!("test_frame_{}.png", test_frame_index + 1)))?;
     binary_sdf(&target_frame.add_border(project_config.border_width, project_config.border_color))
-        .save_as(&format!("gradated_test_frame_{}.png", test_frame))?;
+        .save_as(&root_dir.join(&format!("gradated_test_frame_{}.png", test_frame_index + 1)))?;
     write_json_frames(
         frames,
         frame_dim,
@@ -395,20 +452,15 @@ fn test_project_n_from_config(
 fn write_json_frames(
     frames: &Vec<MonoFrame>,
     frame_dim: (usize, usize),
-    frame_range: (NonZeroU32, NonZeroU32),
+    index_range: (usize, usize),
     border_width: u16,
     border_color: u8,
     output_dir: &Path,
 ) -> Result<()>
 {
-    let index_start = (frame_range.0.get() - 1) as usize;
-    let index_end = (frame_range.0.get() - 1) as usize;
     fs::create_dir_all(&output_dir).map_err(|e| ImplError::CreateDirectory(e))?;
-    if index_start.min(index_end) > frames.len()
-    {
-        return Err(CliError::InvalidFrameRange(frame_range, frames.len()).into());
-    }
-    for (index, frame) in (index_start..index_end).zip(frames.iter().skip(index_start))
+
+    for (index, frame) in (index_range.0..index_range.1).zip(frames.iter().skip(index_range.0))
     {
         let grad_frame = binary_sdf(&frame.add_border(border_width, border_color));
         let deflated_grad_frame = compress_zlib(&grad_frame.data)?;
@@ -431,7 +483,7 @@ fn write_json_frames(
 }
 
 fn write_json_grid(
-    frame_range: (NonZeroU32, NonZeroU32),
+    index_range: (usize, usize),
     frame_dim: (usize, usize),
     output_dir: &Path,
 ) -> Result<()>
@@ -444,7 +496,7 @@ fn write_json_grid(
             "x_size":  frame_dim.0,
             "z_size": frame_dim.1,
             "out_of_bounds_argument": -1,
-            "grid_cell_args": (frame_range.0.get()..=frame_range.1.get())
+            "grid_cell_args": ((index_range.0+1)..index_range.1)
                 .map(|i| format!("term{}", i))
                 .collect::<Vec<_>>()
         }
@@ -525,7 +577,7 @@ impl MonoFrame
 
     fn save_as(
         &self,
-        filename: &str,
+        filename: &Path,
     ) -> Result<()>
     {
         // Create image buffer from monochromatic data
@@ -544,7 +596,7 @@ impl MonoFrame
                 .ok_or(ImplError::ImageCreation)?;
 
         img.save(filename).map_err(|_| ImplError::ImageSaving)?;
-        println!("Saved PNG to {}", filename);
+        println!("Saved PNG to {}", filename.display());
         Ok(())
     }
 }
