@@ -8,6 +8,7 @@ use std::{
         self,
         Write,
     },
+    num::NonZeroU32,
     path::{
         Path,
         PathBuf,
@@ -55,6 +56,7 @@ enum CliError
     ConfigNotFound(PathBuf),
     ConfigRead(io::Error),
     ConfigParse(serde_json::Error),
+    InvalidFrameRange((NonZeroU32, NonZeroU32), usize),
     AccessCurrentDirectory,
 }
 
@@ -89,6 +91,14 @@ impl std::fmt::Display for CliError
             Self::ConfigRead(io_err) =>
             {
                 write!(f, "Failed to read 'v2df_config.json': {}", io_err)
+            },
+            Self::InvalidFrameRange(frame_range, max_frames) =>
+            {
+                write!(
+                    f,
+                    "Frame range [{}, {}] is out of range of frame count: {}",
+                    frame_range.0, frame_range.1, max_frames
+                )
             },
         }
     }
@@ -156,9 +166,11 @@ struct ProjectConfig
     border_width: u16,
     border_color: u8,
     invert_colors: bool,
-    frame_start: u32,
+    frame_start: NonZeroU32,
+    frame_end: NonZeroU32,
     frame_dfs_dir: PathBuf,
     grid_df_dir: PathBuf,
+    test_frame: NonZeroU32,
 }
 
 #[derive(Debug)]
@@ -166,19 +178,22 @@ enum Command
 {
     Init,
     Run,
+    Test,
 }
 
 impl Command
 {
     const INIT: &'static str = "init";
     const RUN: &'static str = "run";
+    const TEST: &'static str = "test";
 
     fn name(&self) -> &'static str
     {
         match self
         {
-            Command::Init => Self::INIT,
-            Command::Run => Self::RUN,
+            Self::Init => Self::INIT,
+            Self::Run => Self::RUN,
+            Self::Test => Self::TEST,
         }
     }
 
@@ -186,8 +201,9 @@ impl Command
     {
         match name
         {
-            Self::INIT => Some(Command::Init),
-            Self::RUN => Some(Command::Run),
+            Self::INIT => Some(Self::Init),
+            Self::RUN => Some(Self::Run),
+            Self::TEST => Some(Self::Test),
             _ => None,
         }
     }
@@ -199,8 +215,9 @@ impl Command
     {
         match self
         {
-            Command::Init => Self::execute_init(args.next().map(PathBuf::from)),
-            Command::Run => Self::execute_run(args.next().map(PathBuf::from)),
+            Self::Init => Self::execute_init(args.next().map(PathBuf::from)),
+            Self::Run => Self::execute_run(args.next().map(PathBuf::from)),
+            Self::Test => Self::execute_test(args.next().map(PathBuf::from)),
         }
     }
 
@@ -224,24 +241,34 @@ impl Command
     {
         let path = Self::get_path_or_curr_dir(path)?;
         println!("Attempting to run v2df in directory: {:?}", path);
-        let config_file = Self::get_config_file(&path)?;
-        let config_str =
-            fs::read_to_string(&config_file).map_err(|err| CliError::ConfigRead(err))?;
-        let config: Config =
-            serde_json::from_str(&config_str).map_err(|err| CliError::ConfigParse(err))?;
+        let config = Self::get_config(&path)?;
         let frames = get_single_channel_frames(&config.video_file)?;
         write_projects_from_config(frames, config)?;
         Ok(())
     }
 
-    fn get_config_file(path: &Path) -> Result<PathBuf>
+    fn execute_test(path: Option<PathBuf>) -> Result<()>
     {
-        let config_file = path.join("v2df_config.json");
-        if config_file.exists() && config_file.is_file()
+        let path = Self::get_path_or_curr_dir(path)?;
+        println!("Attempting to test v2df in directory: {:?}", path);
+        let config = Self::get_config(&path)?;
+        let frames = get_single_channel_frames(&config.video_file)?;
+        test_projects_from_config(frames, config)?;
+        Ok(())
+    }
+
+    fn get_config(path: &Path) -> Result<Config>
+    {
+        let config_path = path.join("v2df_config.json");
+        if !(config_path.exists() && config_path.is_file())
         {
-            return Ok(config_file);
+            return Err(CliError::ConfigNotFound(path.to_owned()).into());
         }
-        Err(CliError::ConfigNotFound(path.to_owned()).into())
+        let config_str =
+            fs::read_to_string(&config_path).map_err(|err| CliError::ConfigRead(err))?;
+        let config: Config =
+            serde_json::from_str(&config_str).map_err(|err| CliError::ConfigParse(err))?;
+        Ok(config)
     }
 }
 
@@ -288,76 +315,121 @@ fn write_project_n_from_config(
 ) -> Result<()>
 {
     let project_config = config.projects.get(n).ok_or(ImplError::AccessProjectConfig)?;
-    let x_size: usize = frames[0].width as usize;
-    let z_size: usize = frames[0].height as usize;
+    let frame_dim = (frames[0].width as usize, frames[0].height as usize);
     let root_dir = &config.output_root_dir;
-    write_json_frames_from_config(&frames, x_size, z_size, root_dir, &project_config)?;
-    write_json_grid_from_config(frames.len(), x_size, z_size, root_dir, &project_config)?;
+    let frame_dir = root_dir.join(&project_config.frame_dfs_dir);
+    let grid_dir = root_dir.join(&project_config.grid_df_dir);
+    let frame_range = (project_config.frame_start, project_config.frame_end);
+    write_json_frames(
+        frames,
+        frame_dim,
+        frame_range,
+        project_config.border_width,
+        project_config.border_color,
+        &frame_dir,
+    )?;
+    write_json_grid(frame_range, frame_dim, &grid_dir)?;
     Ok(())
 }
 
-fn write_json_frames_from_config(
-    frames: &Vec<MonoFrame>,
-    x_size: usize,
-    z_size: usize,
-    root_dir: &Path,
-    project_config: &ProjectConfig,
+fn test_projects_from_config(
+    frames: Vec<MonoFrame>,
+    config: Config,
 ) -> Result<()>
 {
-    let frame_start = project_config.frame_start;
-    let curr_dir = root_dir.join(&project_config.frame_dfs_dir);
-    fs::create_dir_all(&curr_dir).map_err(|e| ImplError::CreateDirectory(e))?;
-    for (index, frame) in (frame_start..).zip(frames.iter().skip(frame_start as usize - 1))
+    let num_projects = config.projects.len();
+    fs::create_dir_all(&config.output_root_dir).map_err(|e| ImplError::CreateDirectory(e))?;
+    for n in 0..num_projects
     {
-        let grad_frame =
-            binary_sdf(&frame.add_border(project_config.border_width, project_config.border_color));
+        test_project_n_from_config(&frames, n, &config)?;
+    }
+    Ok(())
+}
+
+fn test_project_n_from_config(
+    frames: &Vec<MonoFrame>,
+    n: usize,
+    config: &Config,
+) -> Result<()>
+{
+    let project_config = config.projects.get(n).ok_or(ImplError::AccessProjectConfig)?;
+    let frame_dim = (frames[0].width as usize, frames[0].height as usize);
+    let root_dir = &config.output_root_dir;
+    let frame_dir = root_dir.join(&project_config.frame_dfs_dir);
+    let grid_dir = root_dir.join(&project_config.grid_df_dir);
+    let frame_range = (project_config.test_frame, project_config.test_frame.saturating_add(1));
+    write_json_frames(
+        frames,
+        frame_dim,
+        frame_range,
+        project_config.border_width,
+        project_config.border_color,
+        &frame_dir,
+    )?;
+    write_json_grid(frame_range, frame_dim, &grid_dir)?;
+    Ok(())
+}
+
+fn write_json_frames(
+    frames: &Vec<MonoFrame>,
+    frame_dim: (usize, usize),
+    frame_range: (NonZeroU32, NonZeroU32),
+    border_width: u16,
+    border_color: u8,
+    output_dir: &Path,
+) -> Result<()>
+{
+    let index_start = (frame_range.0.get() - 1) as usize;
+    let index_end = (frame_range.0.get() - 1) as usize;
+    fs::create_dir_all(&output_dir).map_err(|e| ImplError::CreateDirectory(e))?;
+    if index_start.min(index_end) > frames.len()
+    {
+        return Err(CliError::InvalidFrameRange(frame_range, frames.len()).into());
+    }
+    for (index, frame) in (index_start..index_end).zip(frames.iter().skip(index_start))
+    {
+        let grad_frame = binary_sdf(&frame.add_border(border_width, border_color));
         let deflated_grad_frame = compress_zlib(&grad_frame.data)?;
         let encoded_deflated_grad_frame_data =
             general_purpose::STANDARD.encode(&deflated_grad_frame);
         let frame_json = json!(
             {
                 "type": "moredfs:single_channel_image_tessellation",
-                "x_size": x_size,
-                "z_size": z_size,
+                "x_size": frame_dim.0,
+                "z_size": frame_dim.1,
                 "deflated_frame_data": encoded_deflated_grad_frame_data
             }
         );
         let frame_json_string =
             serde_json::to_string_pretty(&frame_json).map_err(|e| ImplError::JsonPrettifier(e))?;
-        fs::write(
-            root_dir.join(&project_config.frame_dfs_dir).join(&format!("frame_{}.json", index)),
-            &frame_json_string,
-        )
-        .map_err(|e| ImplError::FileWrite(e))?;
+        fs::write(output_dir.join(&format!("frame_{}.json", index)), &frame_json_string)
+            .map_err(|e| ImplError::FileWrite(e))?;
     }
     Ok(())
 }
 
-fn write_json_grid_from_config(
-    frame_count: usize,
-    x_size: usize,
-    z_size: usize,
-    root_dir: &Path,
-    project_config: &ProjectConfig,
+fn write_json_grid(
+    frame_range: (NonZeroU32, NonZeroU32),
+    frame_dim: (usize, usize),
+    output_dir: &Path,
 ) -> Result<()>
 {
-    let curr_dir = root_dir.join(&project_config.grid_df_dir);
-    fs::create_dir_all(&curr_dir).map_err(|e| ImplError::CreateDirectory(e))?;
+    fs::create_dir_all(&output_dir).map_err(|e| ImplError::CreateDirectory(e))?;
     let frame_json = json!(
         {
             "type": "moredfs:gapped_grid_square_spiral",
             "spacing": 2,
-            "x_size": x_size,
-            "z_size": z_size,
+            "x_size":  frame_dim.0,
+            "z_size": frame_dim.1,
             "out_of_bounds_argument": -1,
-            "grid_cell_args": (1..=frame_count)
+            "grid_cell_args": (frame_range.0.get()..=frame_range.1.get())
                 .map(|i| format!("term{}", i))
                 .collect::<Vec<_>>()
         }
     );
     let frame_json_string =
         serde_json::to_string_pretty(&frame_json).map_err(|e| ImplError::JsonPrettifier(e))?;
-    fs::write(curr_dir.join("all_frames.json"), &frame_json_string)
+    fs::write(output_dir.join("all_frames.json"), &frame_json_string)
         .map_err(|e| ImplError::FileWrite(e))?;
     Ok(())
 }
