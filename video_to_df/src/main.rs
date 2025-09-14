@@ -51,13 +51,13 @@ enum CliError
 {
     NoCommand,
     UnknownCommand(String),
-    MissingArg(Command, String),
     InvalidRunDirectory(PathBuf),
     ConfigNotFound(PathBuf),
     ConfigRead(io::Error),
     ConfigParse(serde_json::Error),
     InvalidFrameRange((NonZeroU32, NonZeroU32), usize),
     AccessCurrentDirectory,
+    InvalidTestFrame(NonZeroU32, usize),
 }
 
 impl std::fmt::Display for CliError
@@ -71,17 +71,17 @@ impl std::fmt::Display for CliError
         {
             Self::NoCommand => write!(f, "Type --help for usage"),
             Self::UnknownCommand(cmd) => write!(f, "Unknown command: '{}'", cmd),
-            Self::MissingArg(command, arg_name) =>
-            {
-                write!(f, "'{}' command requires a {}", command, arg_name)
-            },
             Self::ConfigNotFound(path) =>
             {
                 write!(f, "Failed to find 'v2df_config.json' in directory: {}", path.display())
             },
             Self::InvalidRunDirectory(path) =>
             {
-                write!(f, "Something is wrong with the current directory: {}", path.display())
+                write!(
+                    f,
+                    "Failed to run in current directory, something is wrong with the current directory: {}",
+                    path.display()
+                )
             },
             Self::ConfigParse(serde_err) =>
             {
@@ -92,12 +92,20 @@ impl std::fmt::Display for CliError
             {
                 write!(f, "Failed to read 'v2df_config.json': {}", io_err)
             },
-            Self::InvalidFrameRange(frame_range, max_frames) =>
+            Self::InvalidFrameRange(frame_range, frame_count) =>
             {
                 write!(
                     f,
                     "Frame range [{}, {}] is out of range of frame count: {}",
-                    frame_range.0, frame_range.1, max_frames
+                    frame_range.0, frame_range.1, frame_count
+                )
+            },
+            Self::InvalidTestFrame(test_frame, frame_count) =>
+            {
+                write!(
+                    f,
+                    "Test frame {} is out of range of frame count: {}",
+                    test_frame, frame_count
                 )
             },
         }
@@ -358,6 +366,13 @@ fn test_project_n_from_config(
     let frame_dir = root_dir.join(&project_config.frame_dfs_dir);
     let grid_dir = root_dir.join(&project_config.grid_df_dir);
     let frame_range = (project_config.test_frame, project_config.test_frame.saturating_add(1));
+    let test_frame = project_config.test_frame.get() as usize;
+    let target_frame = frames
+        .get(test_frame)
+        .ok_or(CliError::InvalidTestFrame(project_config.test_frame, frames.len()))?;
+    target_frame.save_as(&format!("test_frame_{}.png", test_frame))?;
+    binary_sdf(&target_frame.add_border(project_config.border_width, project_config.border_color))
+        .save_as(&format!("gradated_test_frame_{}.png", test_frame))?;
     write_json_frames(
         frames,
         frame_dim,
