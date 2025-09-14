@@ -51,7 +51,6 @@ enum CliError
 {
     NoCommand,
     UnknownCommand(String),
-    InvalidRunDirectory(PathBuf),
     ConfigNotFound(PathBuf),
     ConfigRead(io::Error),
     ConfigParse(serde_json::Error),
@@ -74,14 +73,6 @@ impl std::fmt::Display for CliError
             Self::ConfigNotFound(path) =>
             {
                 write!(f, "Failed to find 'v2df_config.json' in directory: {}", path.display())
-            },
-            Self::InvalidRunDirectory(path) =>
-            {
-                write!(
-                    f,
-                    "Failed to run in current directory, something is wrong with the current directory: {}",
-                    path.display()
-                )
             },
             Self::ConfigParse(serde_err) =>
             {
