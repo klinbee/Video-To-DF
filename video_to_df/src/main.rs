@@ -168,11 +168,15 @@ struct ProjectConfig
 {
     border_width: u16,
     border_color: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
     invert_colors: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     frame_start: Option<NonZeroU32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     frame_end: Option<NonZeroU32>,
     frame_dfs_dir: PathBuf,
     grid_df_dir: PathBuf,
+    #[serde(skip_serializing_if = "Option::is_none")]
     test_frame: Option<NonZeroU32>,
 }
 
@@ -265,8 +269,16 @@ impl Command
     fn execute_init(path: Option<PathBuf>) -> Result<()>
     {
         let path = Self::get_path_or_curr_dir(path)?;
-        println!("Creating project at: {:?}", path);
-        todo!()
+        println!("Creating project at: {}", path.display());
+
+        let config = Config::default();
+
+        let config_path = path.join("v2df_config.json");
+        fs::create_dir_all(&path).map_err(|e| ImplError::CreateDirectory(e))?;
+        let config_content =
+            serde_json::to_string_pretty(&config).map_err(|e| ImplError::JsonPrettifier(e))?;
+        std::fs::write(config_path, config_content).map_err(|e| ImplError::FileWrite(e))?;
+        Ok(())
     }
 
     fn execute_run(path: Option<PathBuf>) -> Result<()>
@@ -417,7 +429,12 @@ fn test_project_n_from_config(
 ) -> Result<()>
 {
     let project_config = config.projects.get(n).ok_or(ImplError::AccessProjectConfig)?;
-    let frame_dim = (frames[0].width as usize, frames[0].height as usize);
+
+    let border_width = project_config.border_width as usize;
+
+    let frame_dim =
+        (frames[0].width as usize + border_width * 2, frames[0].height as usize + border_width * 2);
+
     let root_dir = &config.output_root_dir;
     let frame_dir = root_dir.join(&project_config.frame_dfs_dir);
     let grid_dir = root_dir.join(&project_config.grid_df_dir);
@@ -425,7 +442,7 @@ fn test_project_n_from_config(
     let test_frame_index = match project_config.test_frame
     {
         None => 0,
-        Some(test_frame) => test_frame.get() as usize,
+        Some(test_frame) => (test_frame.get() - 1) as usize,
     };
 
     let target_frame = frames
@@ -441,7 +458,7 @@ fn test_project_n_from_config(
         frames,
         frame_dim,
         frame_range,
-        project_config.border_width,
+        border_width as u16,
         project_config.border_color,
         &frame_dir,
     )?;
@@ -476,7 +493,7 @@ fn write_json_frames(
         );
         let frame_json_string =
             serde_json::to_string_pretty(&frame_json).map_err(|e| ImplError::JsonPrettifier(e))?;
-        fs::write(output_dir.join(&format!("frame_{}.json", index)), &frame_json_string)
+        fs::write(output_dir.join(&format!("frame_{}.json", index + 1)), &frame_json_string)
             .map_err(|e| ImplError::FileWrite(e))?;
     }
     Ok(())
@@ -557,10 +574,11 @@ impl MonoFrame
         border_color: u8,
     ) -> MonoFrame
     {
-        let new_width = self.width + 2 * border_width;
-        let new_height = self.height + 2 * border_width;
+        let new_width = self.width as usize + 2 * border_width as usize;
+        let new_height = self.height as usize + 2 * border_width as usize;
 
-        let mut with_border = MonoFrame::solid_color(new_width, new_height, border_color);
+        let mut with_border =
+            MonoFrame::solid_color(new_width as u16, new_height as u16, border_color);
 
         for y in 0..self.height
         {
