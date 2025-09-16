@@ -45,9 +45,16 @@ fn write_project_n_from_config(
 ) -> Result<()>
 {
     let project_config = config.projects.get(n).ok_or(ImplError::AccessProjectConfig)?;
-    let frame_dim = (frames[0].width as usize, frames[0].height as usize);
+
+    let border_width = project_config.border_width as usize;
+
+    let frame_dim =
+        (frames[0].width as usize + border_width * 2, frames[0].height as usize + border_width * 2);
+
     let root_dir = &config.output_root_dir;
+
     let frame_dir = root_dir.join(&project_config.frame_dfs_dir);
+
     let grid_dir = root_dir.join(&project_config.grid_df_dir);
 
     let index_start = match project_config.frame_start
@@ -70,16 +77,36 @@ fn write_project_n_from_config(
 
     let index_range = (index_start, index_end);
 
-    write_json_frames(
-        frames,
-        frame_dim,
-        index_range,
-        project_config.border_width,
-        project_config.border_color,
-        &frame_dir,
-    )?;
-    write_json_grid(index_range, frame_dim, &grid_dir)?;
+    let frame_namespace =
+        create_df_namespace(&project_config.namespace, &project_config.frame_dfs_dir);
+
+    if project_config.make_frames
+    {
+        write_json_frames(
+            frames,
+            frame_dim,
+            index_range,
+            border_width as u16,
+            project_config.border_color,
+            &frame_dir,
+        )?;
+    }
+
+    if project_config.make_grid
+    {
+        write_json_grid(index_range, frame_dim, &frame_namespace, &grid_dir)?;
+    }
     Ok(())
+}
+
+fn create_df_namespace(
+    namespace: &str,
+    relative_path: &Path,
+) -> String
+{
+    let relative_part = relative_path.strip_prefix("./").unwrap().to_string_lossy();
+
+    format!("{}:{}/", namespace, relative_part)
 }
 
 pub fn test_projects_from_config(
@@ -123,22 +150,33 @@ fn test_project_n_from_config(
         .get(test_frame_index)
         .ok_or(CliError::InvalidTestFrame(test_frame_index + 1, frames.len()))?;
 
-    let frame_range = (test_frame_index, test_frame_index + 1);
+    let index_range = (test_frame_index, test_frame_index + 1);
 
     target_frame.save_as(&root_dir.join(&format!("test_frame_{}.png", test_frame_index + 1)))?;
+
     sdf::binary_sdf(
         &target_frame.add_border(project_config.border_width, project_config.border_color),
     )
     .save_as(&root_dir.join(&format!("gradated_test_frame_{}.png", test_frame_index + 1)))?;
-    write_json_frames(
-        frames,
-        frame_dim,
-        frame_range,
-        border_width as u16,
-        project_config.border_color,
-        &frame_dir,
-    )?;
-    write_json_grid(frame_range, frame_dim, &grid_dir)?;
+
+    let frame_namespace =
+        create_df_namespace(&project_config.namespace, &project_config.frame_dfs_dir);
+
+    if project_config.make_frames
+    {
+        write_json_frames(
+            frames,
+            frame_dim,
+            index_range,
+            border_width as u16,
+            project_config.border_color,
+            &frame_dir,
+        )?;
+    }
+    if project_config.make_grid
+    {
+        write_json_grid(index_range, frame_dim, &frame_namespace, &grid_dir)?;
+    }
     Ok(())
 }
 
@@ -169,7 +207,7 @@ fn write_json_frames(
         );
         let frame_json_string =
             serde_json::to_string_pretty(&frame_json).map_err(|e| ImplError::JsonPrettifier(e))?;
-        fs::write(output_dir.join(&format!("frame_{}.json", index + 1)), &frame_json_string)
+        fs::write(output_dir.join(&format!("{}.json", index + 1)), &frame_json_string)
             .map_err(|e| ImplError::FileWrite(e))?;
     }
     Ok(())
@@ -178,6 +216,7 @@ fn write_json_frames(
 fn write_json_grid(
     index_range: (usize, usize),
     frame_dim: (usize, usize),
+    namespace: &str,
     output_dir: &Path,
 ) -> Result<()>
 {
@@ -190,7 +229,7 @@ fn write_json_grid(
             "z_size": frame_dim.1,
             "out_of_bounds_argument": -1,
             "grid_cell_args": ((index_range.0+1)..index_range.1)
-                .map(|i| format!("term{}", i))
+                .map(|i| format!("{}{}", namespace,  i))
                 .collect::<Vec<_>>()
         }
     );
