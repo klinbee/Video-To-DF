@@ -43,22 +43,22 @@ impl Display for CliError
             Self::UnknownCommand(cmd) => write!(f, "Unknown command: '{}'", cmd),
             Self::ConfigNotFound(path) =>
             {
-                write!(f, "Failed to find 'v2df_config.json' in directory: {}", path.display())
+                write!(f, "Failed to find 'v2df_config.json' in directory\n\n{}", path.display())
             },
             Self::ConfigParse(serde_err) =>
             {
-                write!(f, "Failed to parse 'v2df_config.json': {}", serde_err)
+                write!(f, "Failed to parse 'v2df_config.json'\n\n{}", serde_err)
             },
             Self::AccessCurrentDirectory => write!(f, "Could not access current directory"),
             Self::ConfigRead(io_err) =>
             {
-                write!(f, "Failed to read 'v2df_config.json': {}", io_err)
+                write!(f, "Failed to read 'v2df_config.json'\n\n{}", io_err)
             },
             Self::InvalidFrameRange(frame_range, frame_count) =>
             {
                 write!(
                     f,
-                    "Frame range [{}, {}] is out of range of frame count: {}",
+                    "Frame range [{}, {}] is out of range of frame count {}",
                     frame_range.0, frame_range.1, frame_count
                 )
             },
@@ -66,7 +66,7 @@ impl Display for CliError
             {
                 write!(
                     f,
-                    "Test frame {} is out of range of frame count: {}",
+                    "Test frame {} is out of range of frame count {}",
                     test_frame, frame_count
                 )
             },
@@ -113,14 +113,14 @@ impl Display for ImplError
             },
             Self::FileCompression(e) =>
             {
-                write!(f, "Somnehow failed during zlib compression: {}", e)
+                write!(f, "Somnehow failed during zlib compression\n\n{}", e)
             },
             Self::FetchVideoStream => write!(f, "Somehow failed to fetch video stream"),
-            Self::FFmpeg(e) => write!(f, "Somehow failed during video processing: {}", e),
-            Self::FileWrite(e) => write!(f, "Somehow failed to write file during output: {}", e),
+            Self::FFmpeg(e) => write!(f, "Somehow failed during video processing\n\n{}", e),
+            Self::FileWrite(e) => write!(f, "Somehow failed to write file during output\n\n{}", e),
             Self::CreateDirectory(e) =>
             {
-                write!(f, "Somehow failed to create directory during output: {}", e)
+                write!(f, "Somehow failed to create directory during output\n\n{}", e)
             },
         }?;
         writeln!(f)
