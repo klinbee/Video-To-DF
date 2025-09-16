@@ -39,11 +39,11 @@ impl Display for CliError
         write!(f, "v2df: ")?;
         match self
         {
-            Self::NoCommand => write!(f, "Type --help for usage"),
-            Self::UnknownCommand(cmd) => write!(f, "Unknown command: '{}'", cmd),
+            Self::NoCommand => write!(f, "Type 'help' for usage"),
+            Self::UnknownCommand(cmd) => write!(f, "Unknown command '{}'", cmd),
             Self::ConfigNotFound(path) =>
             {
-                write!(f, "Failed to find 'v2df_config.json' in directory\n\n{}", path.display())
+                write!(f, "Failed to find 'v2df_config.json' in directory: {}", path.display())
             },
             Self::ConfigParse(serde_err) =>
             {
@@ -109,7 +109,7 @@ impl Display for ImplError
             Self::ImageSaving => write!(f, "Somehow failed to save image"),
             Self::JsonPrettifier(e) =>
             {
-                write!(f, "Somehow failed to prettify the output JSON: {}", e)
+                write!(f, "Somehow failed to prettify the output JSON\n\n{}", e)
             },
             Self::FileCompression(e) =>
             {

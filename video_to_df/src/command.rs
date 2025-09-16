@@ -49,14 +49,14 @@ impl Command
 
     pub fn from_name(name: &str) -> Option<Self>
     {
-        match name
+        for cmd in [Self::Init, Self::Run, Self::Test, Self::Help]
         {
-            Self::INIT => Some(Self::Init),
-            Self::RUN => Some(Self::Run),
-            Self::TEST => Some(Self::Test),
-            Self::HELP => Some(Self::Help),
-            _ => None,
+            if name == cmd.name() || name == cmd.alias_short() || name == cmd.alias_long()
+            {
+                return Some(cmd);
+            }
         }
+        None
     }
 
     pub fn execute(
@@ -85,36 +85,65 @@ impl Command
     fn execute_init(path: Option<PathBuf>) -> Result<()>
     {
         let path = Self::get_path_or_curr_dir(path)?;
-        println!("Creating project at: {}", path.display());
+        println!("Creating v2df project in directory: {}", path.display());
 
         let config = Config::default();
 
         let config_path = path.join("v2df_config.json");
         fs::create_dir_all(&path).map_err(|e| ImplError::CreateDirectory(e))?;
+
         let config_content =
             serde_json::to_string_pretty(&config).map_err(|e| ImplError::JsonPrettifier(e))?;
+
         fs::write(config_path, config_content).map_err(|e| ImplError::FileWrite(e))?;
+
+        println!("Successfully created v2df project");
+
         Ok(())
     }
 
     fn execute_run(path: Option<PathBuf>) -> Result<()>
     {
         let path = Self::get_path_or_curr_dir(path)?;
-        println!("Attempting to run v2df in directory: {:?}", path);
+
+        println!("Running v2df in directory: {}", path.display());
+
         let config = Self::get_config(&path)?;
+
         let frames = output::get_single_channel_frames(&config.video_file)?;
+
         output::write_projects_from_config(frames, config)?;
+
+        println!("Successfully ran v2df project");
+
         Ok(())
     }
 
     fn execute_test(path: Option<PathBuf>) -> Result<()>
     {
         let path = Self::get_path_or_curr_dir(path)?;
-        println!("Attempting to test v2df in directory: {:?}", path);
+
+        println!("Testing v2df in directory: {}", path.display());
+
         let config = Self::get_config(&path)?;
+
         let frames = output::get_single_channel_frames(&config.video_file)?;
+
         output::test_projects_from_config(frames, config)?;
+
+        println!("Successfully ran v2df test");
+
         Ok(())
+    }
+
+    fn alias_short(&self) -> String
+    {
+        format!("-{}", self.name().chars().next().unwrap())
+    }
+
+    fn alias_long(&self) -> String
+    {
+        format!("--{}", self.name())
     }
 
     fn execute_help() -> Result<()>
@@ -126,22 +155,23 @@ impl Command
         init [path]    Initialize a new project in the specified directory
                        If no path is provided, initializes in current directory
 
-                       New projects consist of a default `v2df_config.json` file
+                       New projects consist of a default 'v2df_config.json' file
+
                        WARNING: overrides existing project configurations
 
         run [path]     Execute the project in the specified directory
                        If no path is provided, runs project in current directory
-                       If no `v2df_config.json` file is found in the current directory, exits
-                       If no entry matching the `video_file` field is found, exits
+                       If no 'v2df_config.json' file is found in the current directory, exits
+                       If no entry matching the 'video_file' field is found, exits
 
-                       Running this project reads the `v2df_config.json` and `video_file`
-                       The `video_file` is:
+                       Running this project reads the 'v2df_config.json' and 'video_file'
+                       The 'video_file' is:
                        - Processed into black and white frames (single channel, mono)
                        - Adds a border
                        - Applies a gradient
                        - Deflated
                        - 64bit Encoded
-                       - Placed into a `frame_n.json` density_function file
+                       - Placed into a 'frame_<n>.json' density_function file
 
                        The density_function file uses the More Density Functions mod to
                        convert all the video's frames into data
@@ -151,12 +181,12 @@ impl Command
 
         test [path]    Runs a single frame test for the project in the specified directory
                        If no path is provided, runs tests in current directory
-                       If no `v2df_config.json` file is found in the current directory, exits
-                       If no entry matching the `video_file` field is found, exits
+                       If no 'v2df_config.json' file is found in the current directory, exits
+                       If no entry matching the 'video_file' field is found, exits
 
                        The single frame test consists of:
-                       - a `frame.json`
-                       - an `all_frames.json` containing that frame's reference
+                       - a 'frame_<n>.json'
+                       - an 'all_frames.json' containing that frame's reference
                        - the frame image before processing
                        - the frame image after processing (gradient and border)
 
