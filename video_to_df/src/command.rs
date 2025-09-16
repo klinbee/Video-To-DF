@@ -119,27 +119,35 @@ impl Command
 
     fn execute_help() -> Result<()>
     {
-        println!("Usage: v2df [COMMAND]
+        println!(
+            "Usage: v2df [COMMAND]
 
     COMMANDS:
         init [path]    Initialize a new project in the specified directory
                        If no path is provided, initializes in current directory
 
                        New projects consist of a default `v2df_config.json` file
-                       Warning: overrides existing project configurations
+                       WARNING: overrides existing project configurations
 
-        run [path]     Execute the project defined by `v2df_config.json` in the specified directory
+        run [path]     Execute the project in the specified directory
                        If no path is provided, runs project in current directory
                        If no `v2df_config.json` file is found in the current directory, exits
                        If no entry matching the `video_file` field is found, exits
 
-                       Running this project reads the `v2df_config.json` file and the `video_file`
-                       The `video_file` is processed into black and white frames, which then have a border added
-                       and have a two pass signed distance field computed on them, resulting in a gradient
+                       Running this project reads the `v2df_config.json` and `video_file`
+                       The `video_file` is:
+                       - Processed into black and white frames (single channel, mono)
+                       - Adds a border
+                       - Applies a gradient
+                       - Deflated
+                       - 64bit Encoded
+                       - Placed into a `frame_n.json` density_function file
 
-                       This data is then deflated and converted encoded into a 64bit string, and that string is
-                       placed into a density_function .json file to be used by the More Density Functions mod to
-                       convert all the video's frames into data that can be used as a heightmap for terrain in Minecraft
+                       The density_function file uses the More Density Functions mod to
+                       convert all the video's frames into data
+                       that can be used as a heightmap for terrain in Minecraft
+
+                       WARNING: overrides existing project files
 
         test [path]    Runs a single frame test for the project in the specified directory
                        If no path is provided, runs tests in current directory
@@ -151,6 +159,8 @@ impl Command
                        - an `all_frames.json` containing that frame's reference
                        - the frame image before processing
                        - the frame image after processing (gradient and border)
+
+                       WARNING: overrides existing project files
 
         help           Show this help message
 
@@ -164,7 +174,8 @@ impl Command
         v2df run                     # Run project in current directory
         v2df run ../other-project    # Run project in ../other-project
         v2df test ./src              # Run tests in ./src directory
-        v2df help                    # Show this help message!");
+        v2df help                    # Show this help message!"
+        );
         Ok(())
     }
 

@@ -25,9 +25,6 @@ use crate::{
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
-// command objectives
-// v2df help / --help / -h
-
 fn main()
 {
     match run()
