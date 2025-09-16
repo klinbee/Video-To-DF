@@ -9,6 +9,7 @@ use std::{
         Path,
         PathBuf,
     },
+    time::Instant,
 };
 
 use crate::{
@@ -82,8 +83,22 @@ impl Command
         }
     }
 
+    fn format_duration(miliseconds: u128) -> String
+    {
+        if miliseconds < 1000
+        {
+            format!("{:.2}ms", miliseconds)
+        }
+        else
+        {
+            format!("{:.2}s", miliseconds as f64 / 1000.0)
+        }
+    }
+
     fn execute_init(path: Option<PathBuf>) -> Result<()>
     {
+        let init_start = Instant::now();
+
         let path = Self::get_path_or_curr_dir(path)?;
         println!("Creating v2df project in directory: {}", path.display());
 
@@ -97,13 +112,17 @@ impl Command
 
         fs::write(config_path, config_content).map_err(|e| ImplError::FileWrite(e))?;
 
-        println!("Successfully created v2df project");
+        let init_time = init_start.elapsed().as_millis();
+
+        println!("Successfully created v2df project in {}", Self::format_duration(init_time));
 
         Ok(())
     }
 
     fn execute_run(path: Option<PathBuf>) -> Result<()>
     {
+        let run_start = Instant::now();
+
         let path = Self::get_path_or_curr_dir(path)?;
 
         println!("Running v2df in directory: {}", path.display());
@@ -114,13 +133,17 @@ impl Command
 
         output::write_projects_from_config(frames, config)?;
 
-        println!("Successfully ran v2df project");
+        let run_time = run_start.elapsed().as_millis();
+
+        println!("Successfully ran v2df project in {}", Self::format_duration(run_time));
 
         Ok(())
     }
 
     fn execute_test(path: Option<PathBuf>) -> Result<()>
     {
+        let test_start = Instant::now();
+
         let path = Self::get_path_or_curr_dir(path)?;
 
         println!("Testing v2df in directory: {}", path.display());
@@ -131,7 +154,9 @@ impl Command
 
         output::test_projects_from_config(frames, config)?;
 
-        println!("Successfully ran v2df test");
+        let test_time = test_start.elapsed().as_millis();
+
+        println!("Successfully ran v2df test in {}", Self::format_duration(test_time));
 
         Ok(())
     }
