@@ -6,32 +6,27 @@ mod output;
 mod sdf;
 
 use std::{
-    env::{
-        self,
-    },
+    env,
     error::Error,
-    fs,
-    path::{
-        Path,
-        PathBuf,
-    },
+    fmt::Result as FormatResult,
+    io::Error as IoError,
 };
+
+use ffmpeg_next as ffmpeg;
+use serde_json::Error as SerdeJsonError;
 
 use crate::{
     command::Command,
     config::*,
     error::*,
+    ffmpeg::Error as FFmpegError,
     monoframe::MonoFrame,
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 // command objectives
-// v2df init
-// v2df new
-// v2df run
 // v2df help / --help / -h
-// v2df test --single_frame frame_num
 
 fn main()
 {

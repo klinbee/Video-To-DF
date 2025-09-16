@@ -3,15 +3,16 @@ use std::{
     fmt::{
         Display,
         Formatter,
-        Result as FormatResult,
     },
-    io::Error as IoError,
     path::PathBuf,
 };
 
-use ffmpeg::Error as FFmpegError;
-use ffmpeg_next as ffmpeg;
-use serde_json::Error as SerdeJsonError;
+use crate::{
+    FFmpegError,
+    FormatResult,
+    IoError,
+    SerdeJsonError,
+};
 
 #[derive(Debug)]
 pub enum CliError
@@ -90,12 +91,12 @@ pub enum ImplError
 
 impl Error for ImplError {}
 
-impl std::fmt::Display for ImplError
+impl Display for ImplError
 {
     fn fmt(
         &self,
-        f: &mut std::fmt::Formatter,
-    ) -> std::fmt::Result
+        f: &mut Formatter,
+    ) -> FormatResult
     {
         write!(f, "v2df: ")?;
         match self

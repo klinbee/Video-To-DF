@@ -8,7 +8,6 @@ use base64::{
     Engine as _,
     engine::general_purpose,
 };
-use ffmpeg_next as ffmpeg;
 use flate2::{
     Compression,
     write::ZlibEncoder,
@@ -21,7 +20,8 @@ use crate::{
     ImplError,
     MonoFrame,
     Result,
-    sdf::binary_sdf,
+    ffmpeg,
+    sdf,
 };
 
 pub fn write_projects_from_config(
@@ -126,8 +126,10 @@ fn test_project_n_from_config(
     let frame_range = (test_frame_index, test_frame_index + 1);
 
     target_frame.save_as(&root_dir.join(&format!("test_frame_{}.png", test_frame_index + 1)))?;
-    binary_sdf(&target_frame.add_border(project_config.border_width, project_config.border_color))
-        .save_as(&root_dir.join(&format!("gradated_test_frame_{}.png", test_frame_index + 1)))?;
+    sdf::binary_sdf(
+        &target_frame.add_border(project_config.border_width, project_config.border_color),
+    )
+    .save_as(&root_dir.join(&format!("gradated_test_frame_{}.png", test_frame_index + 1)))?;
     write_json_frames(
         frames,
         frame_dim,
@@ -153,7 +155,7 @@ fn write_json_frames(
 
     for (index, frame) in (index_range.0..index_range.1).zip(frames.iter().skip(index_range.0))
     {
-        let grad_frame = binary_sdf(&frame.add_border(border_width, border_color));
+        let grad_frame = sdf::binary_sdf(&frame.add_border(border_width, border_color));
         let deflated_grad_frame = compress_zlib(&grad_frame.data)?;
         let encoded_deflated_grad_frame_data =
             general_purpose::STANDARD.encode(&deflated_grad_frame);
