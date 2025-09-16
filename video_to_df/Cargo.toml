@@ -3,6 +3,10 @@ name = "video_to_df"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "v2df"
+path = "src/main.rs"
+
 [dependencies]
 ffmpeg-next = {version = "8.0.0"}
 image = "0.25.8"
