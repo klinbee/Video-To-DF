@@ -27,7 +27,10 @@ pub struct ProjectConfig
     pub frame_start: Option<NonZeroU32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frame_end: Option<NonZeroU32>,
+    pub namespace: String,
+    pub make_frames: bool,
     pub frame_dfs_dir: PathBuf,
+    pub make_grid: bool,
     pub grid_df_dir: PathBuf,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub test_frame: Option<NonZeroU32>,
@@ -55,7 +58,10 @@ impl Default for ProjectConfig
             invert_colors: None,
             frame_start: Some(NonZeroU32::new(1).unwrap()),
             frame_end: None,
+            namespace: String::from("namespace"),
+            make_frames: true,
             frame_dfs_dir: PathBuf::from("./frames"),
+            make_grid: true,
             grid_df_dir: PathBuf::from("./"),
             test_frame: Some(NonZeroU32::new(1).unwrap()),
         }
