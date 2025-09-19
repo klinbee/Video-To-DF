@@ -270,7 +270,7 @@ fn write_tp_functions(
 {
     fs::create_dir_all(&output_dir).map_err(|e| ImplError::CreateDirectory(e))?;
 
-    for i in (index_range.0)..=index_range.1
+    for i in (index_range.0)..index_range.1
     {
         let (curr_x, curr_z) = index_to_spiral_coords(i);
         let (curr_x, curr_z) = (
