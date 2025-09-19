@@ -32,6 +32,9 @@ pub struct ProjectConfig
     pub frame_dfs_dir: PathBuf,
     pub make_grid: bool,
     pub grid_df_dir: PathBuf,
+    pub make_tp: bool,
+    pub tp_height: i16,
+    pub tp_dir: PathBuf,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub test_frame: Option<NonZeroU32>,
 }
@@ -63,6 +66,9 @@ impl Default for ProjectConfig
             frame_dfs_dir: PathBuf::from("./frames"),
             make_grid: true,
             grid_df_dir: PathBuf::from("./"),
+            make_tp: true,
+            tp_height: 220,
+            tp_dir: PathBuf::from("./frame_tp"),
             test_frame: Some(NonZeroU32::new(1).unwrap()),
         }
     }
