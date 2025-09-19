@@ -199,10 +199,16 @@ fn write_json_frames(
             general_purpose::STANDARD.encode(&deflated_grad_frame);
         let frame_json = json!(
             {
-                "type": "moredfs:single_channel_image_tessellation",
-                "x_size": frame_dim.0,
-                "z_size": frame_dim.1,
-                "deflated_frame_data": encoded_deflated_grad_frame_data
+                "type": "minecraft:flat_cache",
+                "argument": {
+                  "type": "minecraft:cache_2d",
+                  "argument": {
+                    "type": "moredfs:single_channel_image_tessellation",
+                    "x_size": frame_dim.0,
+                    "z_size": frame_dim.1,
+                    "deflated_frame_data": encoded_deflated_grad_frame_data
+                  }
+                }
             }
         );
         let frame_json_string =
@@ -227,7 +233,7 @@ fn write_json_grid(
             "spacing": 2,
             "x_size":  frame_dim.0,
             "z_size": frame_dim.1,
-            "out_of_bounds_argument": -1,
+            "out_of_bounds_argument": 256,
             "grid_cell_args": ((index_range.0+1)..index_range.1)
                 .map(|i| format!("{}{}", namespace,  i))
                 .collect::<Vec<_>>()
