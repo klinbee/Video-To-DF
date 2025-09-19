@@ -57,6 +57,8 @@ fn write_project_n_from_config(
 
     let grid_dir = root_dir.join(&project_config.grid_df_dir);
 
+    let tp_dir = root_dir.join(&project_config.tp_dir);
+
     let index_start = match project_config.frame_start
     {
         None => 0,
@@ -95,6 +97,11 @@ fn write_project_n_from_config(
     if project_config.make_grid
     {
         write_json_grid(index_range, frame_dim, &frame_namespace, &grid_dir)?;
+    }
+
+    if project_config.make_tp
+    {
+        write_tp_functions(index_range, frame_dim, project_config.tp_height, &tp_dir)?;
     }
     Ok(())
 }
@@ -139,6 +146,7 @@ fn test_project_n_from_config(
     let root_dir = &config.output_root_dir;
     let frame_dir = root_dir.join(&project_config.frame_dfs_dir);
     let grid_dir = root_dir.join(&project_config.grid_df_dir);
+    let tp_dir = root_dir.join(&project_config.tp_dir);
 
     let test_frame_index = match project_config.test_frame
     {
@@ -173,10 +181,17 @@ fn test_project_n_from_config(
             &frame_dir,
         )?;
     }
+
     if project_config.make_grid
     {
         write_json_grid(index_range, frame_dim, &frame_namespace, &grid_dir)?;
     }
+
+    if project_config.make_tp
+    {
+        write_tp_functions(index_range, frame_dim, project_config.tp_height, &tp_dir)?;
+    }
+
     Ok(())
 }
 
@@ -230,7 +245,7 @@ fn write_json_grid(
     let frame_json = json!(
         {
             "type": "moredfs:gapped_grid_square_spiral",
-            "spacing": 2,
+            "spacing": 1,
             "x_size":  frame_dim.0,
             "z_size": frame_dim.1,
             "out_of_bounds_argument": 256,
@@ -244,6 +259,71 @@ fn write_json_grid(
     fs::write(output_dir.join("all_frames.json"), &frame_json_string)
         .map_err(|e| ImplError::FileWrite(e))?;
     Ok(())
+}
+
+fn write_tp_functions(
+    index_range: (usize, usize),
+    frame_dim: (usize, usize),
+    tp_height: i16,
+    output_dir: &Path,
+) -> Result<()>
+{
+    fs::create_dir_all(&output_dir).map_err(|e| ImplError::CreateDirectory(e))?;
+
+    for i in (index_range.0)..=index_range.1
+    {
+        let (curr_x, curr_z) = index_to_spiral_coords(i);
+        let (curr_x, curr_z) = (
+            curr_x * 2 * frame_dim.0 as isize + frame_dim.0 as isize / 2,
+            curr_z * 2 * frame_dim.1 as isize + frame_dim.1 as isize / 2,
+        );
+        let tp_string = format!("tp @a {} {} {} 180 90", curr_x, tp_height, curr_z);
+        fs::write(output_dir.join(format!("{}.mcfunction", i + 1)), &tp_string)
+            .map_err(|e| ImplError::FileWrite(e))?;
+    }
+    Ok(())
+}
+
+fn index_to_spiral_coords(n: usize) -> (isize, isize)
+{
+    if n == 0
+    {
+        return (0, 0);
+    }
+
+    // Find which ring/layer we're in
+    let layer = ((((n as f64).sqrt() - 1.0) / 2.0).floor() as isize) + 1;
+
+    // Find the starting index of this layer
+    let layer_start = (2 * layer - 1).pow(2);
+
+    // Position within the layer
+    let pos_in_layer = n as isize - layer_start;
+
+    // Side length of current layer
+    let side_length = 2 * layer;
+
+    // Determine which side of the square we're on and calculate coordinates
+    if pos_in_layer < side_length
+    {
+        // Right side, moving up
+        (layer, -layer + 1 + pos_in_layer)
+    }
+    else if pos_in_layer < 2 * side_length
+    {
+        // Top side, moving left
+        (layer - 1 - (pos_in_layer - side_length), layer)
+    }
+    else if pos_in_layer < 3 * side_length
+    {
+        // Left side, moving down
+        (-layer, layer - 1 - (pos_in_layer - 2 * side_length))
+    }
+    else
+    {
+        // Bottom side, moving right
+        (-layer + 1 + (pos_in_layer - 3 * side_length), -layer)
+    }
 }
 
 fn compress_zlib(bytes: &[u8]) -> Result<Vec<u8>>
