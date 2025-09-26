@@ -10,18 +10,16 @@ use std::{
 use crate::{
     FFmpegError,
     FormatResult,
-    IoError,
-    SerdeJsonError,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum CliError
 {
     NoCommand,
     UnknownCommand(String),
     ConfigNotFound(PathBuf),
-    ConfigRead(IoError),
-    ConfigParse(SerdeJsonError),
+    ConfigRead(String),
+    ConfigParse(String),
     InvalidFrameRange((usize, usize), usize),
     AccessCurrentDirectory,
     InvalidTestFrame(usize, usize),
@@ -75,17 +73,17 @@ impl Display for CliError
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ImplError
 {
     AccessProjectConfig,
     ImageCreation,
     ImageSaving,
-    JsonPrettifier(SerdeJsonError),
-    FileCompression(IoError),
-    FileWrite(IoError),
+    JsonPrettifier(String),
+    FileCompression(String),
+    FileWrite(String),
     FetchVideoStream,
-    CreateDirectory(IoError),
+    CreateDirectory(String),
     FFmpeg(FFmpegError),
 }
 

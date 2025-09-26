@@ -105,12 +105,13 @@ impl Command
         let config = Config::default();
 
         let config_path = path.join("v2df_config.json");
-        fs::create_dir_all(&path).map_err(|e| ImplError::CreateDirectory(e))?;
+        fs::create_dir_all(&path).map_err(|e| ImplError::CreateDirectory(format!("{:?}", e)))?;
 
-        let config_content =
-            serde_json::to_string_pretty(&config).map_err(|e| ImplError::JsonPrettifier(e))?;
+        let config_content = serde_json::to_string_pretty(&config)
+            .map_err(|e| ImplError::JsonPrettifier(format!("{:?}", e)))?;
 
-        fs::write(config_path, config_content).map_err(|e| ImplError::FileWrite(e))?;
+        fs::write(config_path, config_content)
+            .map_err(|e| ImplError::FileWrite(format!("{:?}", e)))?;
 
         let init_time = init_start.elapsed().as_millis();
 
@@ -241,10 +242,10 @@ impl Command
         {
             return Err(CliError::ConfigNotFound(path.to_owned()).into());
         }
-        let config_str =
-            fs::read_to_string(&config_path).map_err(|err| CliError::ConfigRead(err))?;
-        let config: Config =
-            serde_json::from_str(&config_str).map_err(|err| CliError::ConfigParse(err))?;
+        let config_str = fs::read_to_string(&config_path)
+            .map_err(|e| CliError::ConfigRead(format!("{:?}", e)))?;
+        let config: Config = serde_json::from_str(&config_str)
+            .map_err(|e| CliError::ConfigParse(format!("{:?}", e)))?;
         Ok(config)
     }
 }

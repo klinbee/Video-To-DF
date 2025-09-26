@@ -2,6 +2,7 @@ use std::{
     fs,
     io::Write,
     path::Path,
+    sync::Mutex,
 };
 
 use base64::{
@@ -12,6 +13,7 @@ use flate2::{
     Compression,
     write::ZlibEncoder,
 };
+use rayon::prelude::*;
 use serde_json::json;
 
 use crate::{
@@ -30,7 +32,8 @@ pub fn write_projects_from_config(
 ) -> Result<()>
 {
     let num_projects = config.projects.len();
-    fs::create_dir_all(&config.output_root_dir).map_err(|e| ImplError::CreateDirectory(e))?;
+    fs::create_dir_all(&config.output_root_dir)
+        .map_err(|e| ImplError::CreateDirectory(format!("{:?}", e)))?;
     for n in 0..num_projects
     {
         write_project_n_from_config(&frames, n, &config)?;
@@ -84,7 +87,7 @@ fn write_project_n_from_config(
 
     if project_config.make_frames
     {
-        write_json_frames(
+        write_json_frames_parallel(
             frames,
             frame_dim,
             index_range,
@@ -122,7 +125,8 @@ pub fn test_projects_from_config(
 ) -> Result<()>
 {
     let num_projects = config.projects.len();
-    fs::create_dir_all(&config.output_root_dir).map_err(|e| ImplError::CreateDirectory(e))?;
+    fs::create_dir_all(&config.output_root_dir)
+        .map_err(|e| ImplError::CreateDirectory(format!("{:?}", e)))?;
     for n in 0..num_projects
     {
         test_project_n_from_config(&frames, n, &config)?;
@@ -172,7 +176,7 @@ fn test_project_n_from_config(
 
     if project_config.make_frames
     {
-        write_json_frames(
+        write_json_frames_parallel(
             frames,
             frame_dim,
             index_range,
@@ -195,7 +199,46 @@ fn test_project_n_from_config(
     Ok(())
 }
 
-fn write_json_frames(
+// fn write_json_frames(
+//     frames: &Vec<MonoFrame>,
+//     frame_dim: (usize, usize),
+//     index_range: (usize, usize),
+//     border_width: u16,
+//     border_color: u8,
+//     output_dir: &Path,
+// ) -> Result<()>
+// {
+//     fs::create_dir_all(&output_dir).map_err(|e| ImplError::CreateDirectory(format!("{:?}", e)))?;
+
+//     for (index, frame) in (index_range.0..index_range.1).zip(frames.iter().skip(index_range.0))
+//     {
+//         let grad_frame = sdf::binary_sdf(&frame.add_border(border_width, border_color));
+//         let deflated_grad_frame = compress_zlib(&grad_frame.data)?;
+//         let encoded_deflated_grad_frame_data =
+//             general_purpose::STANDARD.encode(&deflated_grad_frame);
+//         let frame_json = json!(
+//             {
+//                 "type": "minecraft:flat_cache",
+//                 "argument": {
+//                   "type": "minecraft:cache_2d",
+//                   "argument": {
+//                     "type": "moredfs:single_channel_image_tessellation",
+//                     "x_size": frame_dim.0,
+//                     "z_size": frame_dim.1,
+//                     "deflated_frame_data": encoded_deflated_grad_frame_data
+//                   }
+//                 }
+//             }
+//         );
+//         let frame_json_string = serde_json::to_string_pretty(&frame_json)
+//             .map_err(|e| ImplError::JsonPrettifier(format!("{:?}", e)))?;
+//         fs::write(output_dir.join(&format!("{}.json", index + 1)), &frame_json_string)
+//             .map_err(|e| ImplError::FileWrite(format!("{:?}", e)))?;
+//     }
+//     Ok(())
+// }
+
+fn write_json_frames_parallel(
     frames: &Vec<MonoFrame>,
     frame_dim: (usize, usize),
     index_range: (usize, usize),
@@ -204,33 +247,79 @@ fn write_json_frames(
     output_dir: &Path,
 ) -> Result<()>
 {
-    fs::create_dir_all(&output_dir).map_err(|e| ImplError::CreateDirectory(e))?;
+    fs::create_dir_all(&output_dir).map_err(|e| ImplError::CreateDirectory(format!("{:?}", e)))?;
 
-    for (index, frame) in (index_range.0..index_range.1).zip(frames.iter().skip(index_range.0))
-    {
-        let grad_frame = sdf::binary_sdf(&frame.add_border(border_width, border_color));
-        let deflated_grad_frame = compress_zlib(&grad_frame.data)?;
-        let encoded_deflated_grad_frame_data =
-            general_purpose::STANDARD.encode(&deflated_grad_frame);
-        let frame_json = json!(
+    // Store ImplError directly instead of Box<dyn Error>
+    let errors: Mutex<Vec<ImplError>> = Mutex::new(Vec::new());
+
+    // Process frames in parallel
+    (index_range.0..index_range.1)
+        .into_par_iter()
+        .zip(frames.par_iter().skip(index_range.0))
+        .for_each(|(index, frame)| {
+            match process_single_frame(
+                frame,
+                frame_dim,
+                index,
+                border_width,
+                border_color,
+                output_dir,
+            )
             {
-                "type": "minecraft:flat_cache",
-                "argument": {
-                  "type": "minecraft:cache_2d",
-                  "argument": {
-                    "type": "moredfs:single_channel_image_tessellation",
-                    "x_size": frame_dim.0,
-                    "z_size": frame_dim.1,
-                    "deflated_frame_data": encoded_deflated_grad_frame_data
-                  }
-                }
+                Ok(()) =>
+                {},
+                Err(e) =>
+                {
+                    errors.lock().unwrap().push(e);
+                },
             }
-        );
-        let frame_json_string =
-            serde_json::to_string_pretty(&frame_json).map_err(|e| ImplError::JsonPrettifier(e))?;
-        fs::write(output_dir.join(&format!("{}.json", index + 1)), &frame_json_string)
-            .map_err(|e| ImplError::FileWrite(e))?;
+        });
+
+    // Check if any errors occurred
+    let errors = errors.into_inner().unwrap();
+    if !errors.is_empty()
+    {
+        return Err(Box::new(errors.into_iter().next().unwrap())); // Return first error
     }
+
+    Ok(())
+}
+
+fn process_single_frame(
+    frame: &MonoFrame,
+    frame_dim: (usize, usize),
+    index: usize,
+    border_width: u16,
+    border_color: u8,
+    output_dir: &Path,
+) -> std::result::Result<(), ImplError>
+{
+    let grad_frame = sdf::binary_sdf(&frame.add_border(border_width, border_color));
+    let deflated_grad_frame =
+        compress_zlib(&grad_frame.data).map_err(|e| ImplError::FileWrite(format!("{:?}", e)))?;
+    let encoded_deflated_grad_frame_data = general_purpose::STANDARD.encode(&deflated_grad_frame);
+
+    let frame_json = json!(
+        {
+            "type": "minecraft:flat_cache",
+            "argument": {
+              "type": "minecraft:cache_2d",
+              "argument": {
+                "type": "moredfs:single_channel_image_tessellation",
+                "x_size": frame_dim.0,
+                "z_size": frame_dim.1,
+                "deflated_frame_data": encoded_deflated_grad_frame_data
+              }
+            }
+        }
+    );
+
+    let frame_json_string = serde_json::to_string_pretty(&frame_json)
+        .map_err(|e| ImplError::JsonPrettifier(format!("{:?}", e)))?;
+
+    fs::write(output_dir.join(&format!("{}.json", index + 1)), &frame_json_string)
+        .map_err(|e| ImplError::FileWrite(format!("{:?}", e)))?;
+
     Ok(())
 }
 
@@ -241,7 +330,7 @@ fn write_json_grid(
     output_dir: &Path,
 ) -> Result<()>
 {
-    fs::create_dir_all(&output_dir).map_err(|e| ImplError::CreateDirectory(e))?;
+    fs::create_dir_all(&output_dir).map_err(|e| ImplError::CreateDirectory(format!("{:?}", e)))?;
     let frame_json = json!(
         {
             "type": "moredfs:gapped_grid_square_spiral",
@@ -254,10 +343,10 @@ fn write_json_grid(
                 .collect::<Vec<_>>()
         }
     );
-    let frame_json_string =
-        serde_json::to_string_pretty(&frame_json).map_err(|e| ImplError::JsonPrettifier(e))?;
+    let frame_json_string = serde_json::to_string_pretty(&frame_json)
+        .map_err(|e| ImplError::JsonPrettifier(format!("{:?}", e)))?;
     fs::write(output_dir.join("all_frames.json"), &frame_json_string)
-        .map_err(|e| ImplError::FileWrite(e))?;
+        .map_err(|e| ImplError::FileWrite(format!("{:?}", e)))?;
     Ok(())
 }
 
@@ -268,7 +357,7 @@ fn write_tp_functions(
     output_dir: &Path,
 ) -> Result<()>
 {
-    fs::create_dir_all(&output_dir).map_err(|e| ImplError::CreateDirectory(e))?;
+    fs::create_dir_all(&output_dir).map_err(|e| ImplError::CreateDirectory(format!("{:?}", e)))?;
 
     for i in (index_range.0)..index_range.1
     {
@@ -279,7 +368,7 @@ fn write_tp_functions(
         );
         let tp_string = format!("tp @a {} {} {} 180 90", curr_x, tp_height, curr_z);
         fs::write(output_dir.join(format!("{}.mcfunction", i + 1)), &tp_string)
-            .map_err(|e| ImplError::FileWrite(e))?;
+            .map_err(|e| ImplError::FileWrite(format!("{:?}", e)))?;
     }
     Ok(())
 }
@@ -329,8 +418,9 @@ fn index_to_spiral_coords(n: usize) -> (isize, isize)
 fn compress_zlib(bytes: &[u8]) -> Result<Vec<u8>>
 {
     let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-    encoder.write_all(bytes).map_err(|e| ImplError::FileCompression(e))?;
-    let compressed_bytes = encoder.finish().map_err(|e| ImplError::FileCompression(e))?;
+    encoder.write_all(bytes).map_err(|e| ImplError::FileCompression(format!("{:?}", e)))?;
+    let compressed_bytes =
+        encoder.finish().map_err(|e| ImplError::FileCompression(format!("{:?}", e)))?;
     Ok(compressed_bytes)
 }
 

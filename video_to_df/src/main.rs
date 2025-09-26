@@ -9,11 +9,9 @@ use std::{
     env,
     error::Error,
     fmt::Result as FormatResult,
-    io::Error as IoError,
 };
 
 use ffmpeg_next as ffmpeg;
-use serde_json::Error as SerdeJsonError;
 
 use crate::{
     command::Command,
