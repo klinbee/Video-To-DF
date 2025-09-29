@@ -37,11 +37,16 @@ fn main()
 
 fn run() -> Result<()>
 {
+    // Straightforward
     let mut args = env::args().skip(1);
 
+    // Pretty good, although the error is kinda weird (but valid)
     let command_str = args.next().ok_or(CliError::NoCommand)?;
 
+    // Again, okay, except the error. This is an appropriate simplification. Commands must be kept
+    // valid
     let command = Command::from_name(&command_str).ok_or(CliError::UnknownCommand(command_str))?;
 
+    // uh oh
     command.execute(args)
 }
