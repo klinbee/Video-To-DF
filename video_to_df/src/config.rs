@@ -1,11 +1,20 @@
 use std::{
+    fs,
     num::NonZeroU32,
-    path::PathBuf,
+    path::{
+        Path,
+        PathBuf,
+    },
 };
 
 use serde::{
     Deserialize,
     Serialize,
+};
+
+use crate::{
+    Result,
+    error::CliError,
 };
 
 #[derive(Serialize, Deserialize)]
@@ -71,5 +80,21 @@ impl Default for ProjectConfig
             tp_dir: PathBuf::from("./frame_tp"),
             test_frame: Some(NonZeroU32::new(1).unwrap()),
         }
+    }
+}
+
+impl Config
+{
+    pub fn from_path(path: &Path) -> Result<Config>
+    {
+        if !(path.exists() && path.is_file())
+        {
+            return Err(CliError::ConfigNotFound(path.to_owned()).into());
+        }
+        let config_str =
+            fs::read_to_string(&path).map_err(|e| CliError::ConfigRead(format!("{:?}", e)))?;
+        let config: Config = serde_json::from_str(&config_str)
+            .map_err(|e| CliError::ConfigParse(format!("{:?}", e)))?;
+        Ok(config)
     }
 }
