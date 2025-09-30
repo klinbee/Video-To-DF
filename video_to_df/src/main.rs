@@ -3,7 +3,6 @@ mod config;
 mod error;
 mod functions;
 mod monoframe;
-mod sdf;
 
 use std::{
     env,
