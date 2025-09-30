@@ -3,7 +3,6 @@ mod config;
 mod error;
 mod functions;
 mod monoframe;
-mod output;
 mod sdf;
 
 use std::{
@@ -92,9 +91,9 @@ fn run() -> Result<()>
 
             let config = Config::from_path(&path.join("v2df_config.json"))?;
 
-            let frames = output::get_single_channel_frames(&config.video_file)?;
+            let frames = functions::get_single_channel_frames(&config.video_file)?;
 
-            output::write_projects_from_config(frames, config)?;
+            functions::write_projects_from_config(frames, config)?;
 
             let run_time = run_start.elapsed().as_millis();
 
@@ -114,9 +113,9 @@ fn run() -> Result<()>
 
             let config = Config::from_path(&path.join("v2df_config.json"))?;
 
-            let frames = output::get_single_channel_frames(&config.video_file)?;
+            let frames = functions::get_single_channel_frames(&config.video_file)?;
 
-            output::test_projects_from_config(frames, config)?;
+            functions::test_projects_from_config(frames, config)?;
 
             let test_time = test_start.elapsed().as_millis();
 
