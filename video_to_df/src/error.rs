@@ -7,10 +7,7 @@ use std::{
     path::PathBuf,
 };
 
-use crate::{
-    FFmpegError,
-    FormatResult,
-};
+use crate::FormatResult;
 
 #[derive(Debug, Clone)]
 pub enum CliError
@@ -84,7 +81,7 @@ pub enum ImplError
     FileWrite(String),
     FetchVideoStream,
     CreateDirectory(String),
-    FFmpeg(FFmpegError),
+    FFmpeg(String),
 }
 
 impl Error for ImplError {}

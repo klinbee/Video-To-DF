@@ -13,6 +13,7 @@ use base64::{
     Engine as _,
     engine::general_purpose,
 };
+use ffmpeg_next as ffmpeg;
 use flate2::{
     Compression,
     write::ZlibEncoder,
@@ -26,7 +27,6 @@ use crate::{
     ImplError,
     MonoFrame,
     Result,
-    ffmpeg,
 };
 
 pub fn get_path_or_curr_dir(path: Option<PathBuf>) -> Result<PathBuf>
@@ -450,9 +450,10 @@ pub fn get_single_channel_frames<P>(video_path: P) -> Result<Vec<MonoFrame>>
 where
     P: AsRef<Path>,
 {
-    ffmpeg::init().map_err(|e| ImplError::FFmpeg(e))?;
+    ffmpeg::init().map_err(|e| ImplError::FFmpeg(format!("{:?}", e)))?;
 
-    let mut input = ffmpeg::format::input(video_path.as_ref()).map_err(|e| ImplError::FFmpeg(e))?;
+    let mut input = ffmpeg::format::input(video_path.as_ref())
+        .map_err(|e| ImplError::FFmpeg(format!("{:?}", e)))?;
 
     let video_stream =
         input.streams().best(ffmpeg::media::Type::Video).ok_or(ImplError::FetchVideoStream)?;
@@ -460,10 +461,10 @@ where
     let video_stream_index = video_stream.index();
 
     let mut decoder = ffmpeg::codec::context::Context::from_parameters(video_stream.parameters())
-        .map_err(|e| ImplError::FFmpeg(e))?
+        .map_err(|e| ImplError::FFmpeg(format!("{:?}", e)))?
         .decoder()
         .video()
-        .map_err(|e| ImplError::FFmpeg(e))?;
+        .map_err(|e| ImplError::FFmpeg(format!("{:?}", e)))?;
 
     // Set up context to convert to monochromatic
     let mut monochromatic_ctx = ffmpeg::software::scaling::context::Context::get(
@@ -475,7 +476,7 @@ where
         decoder.height(),
         ffmpeg::software::scaling::flag::Flags::BILINEAR,
     )
-    .map_err(|e| ImplError::FFmpeg(e))?;
+    .map_err(|e| ImplError::FFmpeg(format!("{:?}", e)))?;
 
     let mut frames: Vec<MonoFrame> = vec![];
 
@@ -483,7 +484,7 @@ where
     {
         if stream.index() == video_stream_index
         {
-            decoder.send_packet(&packet).map_err(|e| ImplError::FFmpeg(e))?;
+            decoder.send_packet(&packet).map_err(|e| ImplError::FFmpeg(format!("{:?}", e)))?;
 
             let mut decoded = ffmpeg::util::frame::video::Video::empty();
             while decoder.receive_frame(&mut decoded).is_ok()
@@ -492,7 +493,7 @@ where
 
                 monochromatic_ctx
                     .run(&decoded, &mut mono_video)
-                    .map_err(|e| ImplError::FFmpeg(e))?;
+                    .map_err(|e| ImplError::FFmpeg(format!("{:?}", e)))?;
 
                 frames.push(MonoFrame::new(
                     mono_video.data(0).to_vec(), // Single channel data
@@ -503,12 +504,14 @@ where
         }
     }
     // Flush decoder (could be storing extra frames)
-    decoder.send_eof().map_err(|e| ImplError::FFmpeg(e))?;
+    decoder.send_eof().map_err(|e| ImplError::FFmpeg(format!("{:?}", e)))?;
     let mut decoded = ffmpeg::util::frame::video::Video::empty();
     while decoder.receive_frame(&mut decoded).is_ok()
     {
         let mut mono_video = ffmpeg::util::frame::video::Video::empty();
-        monochromatic_ctx.run(&decoded, &mut mono_video).map_err(|e| ImplError::FFmpeg(e))?;
+        monochromatic_ctx
+            .run(&decoded, &mut mono_video)
+            .map_err(|e| ImplError::FFmpeg(format!("{:?}", e)))?;
 
         frames.push(MonoFrame::new(
             mono_video.data(0).to_vec(),

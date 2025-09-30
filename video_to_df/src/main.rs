@@ -13,13 +13,10 @@ use std::{
     time::Instant,
 };
 
-use ffmpeg_next as ffmpeg;
-
 use crate::{
     command::Command,
     config::*,
     error::*,
-    ffmpeg::Error as FFmpegError,
     monoframe::MonoFrame,
 };
 
