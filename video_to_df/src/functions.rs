@@ -18,6 +18,10 @@ use flate2::{
     Compression,
     write::ZlibEncoder,
 };
+use image::{
+    ImageBuffer,
+    Luma,
+};
 use rayon::prelude::*;
 use serde_json::json;
 
@@ -25,8 +29,8 @@ use crate::{
     CliError,
     Config,
     ImplError,
-    MonoFrame,
     Result,
+    monovideo::MonoVideo,
 };
 
 pub fn get_path_or_curr_dir(path: Option<PathBuf>) -> Result<PathBuf>
@@ -51,7 +55,7 @@ pub fn format_duration(miliseconds: u128) -> String
 }
 
 pub fn write_projects_from_config(
-    frames: Vec<MonoFrame>,
+    frames: MonoVideo,
     config: Config,
 ) -> Result<()>
 {
@@ -66,7 +70,7 @@ pub fn write_projects_from_config(
 }
 
 fn write_project_n_from_config(
-    frames: &Vec<MonoFrame>,
+    video: &MonoVideo,
     n: usize,
     config: &Config,
 ) -> Result<()>
@@ -76,7 +80,7 @@ fn write_project_n_from_config(
     let border_width = project_config.border_width as usize;
 
     let frame_dim =
-        (frames[0].width as usize + border_width * 2, frames[0].height as usize + border_width * 2);
+        (video.width as usize + border_width * 2, video.height as usize + border_width * 2);
 
     let root_dir = &config.output_root_dir;
 
@@ -93,14 +97,14 @@ fn write_project_n_from_config(
     };
     let index_end = match project_config.frame_end
     {
-        None => frames.len(),
+        None => video.len(),
         Some(frame_start) => (frame_start.get() - 1) as usize,
     };
 
-    if index_start.min(index_end) > frames.len()
+    if index_start.min(index_end) > video.len()
     {
         return Err(
-            CliError::InvalidFrameRange((index_start + 1, index_end + 1), frames.len()).into()
+            CliError::InvalidFrameRange((index_start + 1, index_end + 1), video.len()).into()
         );
     }
 
@@ -112,7 +116,7 @@ fn write_project_n_from_config(
     if project_config.make_frames
     {
         write_json_frames_parallel(
-            frames,
+            video,
             frame_dim,
             index_range,
             border_width as u16,
@@ -144,7 +148,7 @@ fn create_df_namespace(
 }
 
 pub fn test_projects_from_config(
-    frames: Vec<MonoFrame>,
+    video: MonoVideo,
     config: Config,
 ) -> Result<()>
 {
@@ -153,13 +157,13 @@ pub fn test_projects_from_config(
         .map_err(|e| ImplError::CreateDirectory(format!("{:?}", e)))?;
     for n in 0..num_projects
     {
-        test_project_n_from_config(&frames, n, &config)?;
+        test_project_n_from_config(&video, n, &config)?;
     }
     Ok(())
 }
 
 fn test_project_n_from_config(
-    frames: &Vec<MonoFrame>,
+    video: &MonoVideo,
     n: usize,
     config: &Config,
 ) -> Result<()>
@@ -169,7 +173,7 @@ fn test_project_n_from_config(
     let border_width = project_config.border_width as usize;
 
     let frame_dim =
-        (frames[0].width as usize + border_width * 2, frames[0].height as usize + border_width * 2);
+        (video.width as usize + border_width * 2, video.height as usize + border_width * 2);
 
     let root_dir = &config.output_root_dir;
     let frame_dir = root_dir.join(&project_config.frame_dfs_dir);
@@ -182,16 +186,36 @@ fn test_project_n_from_config(
         Some(test_frame) => (test_frame.get() - 1) as usize,
     };
 
-    let target_frame = frames
-        .get(test_frame_index)
-        .ok_or(CliError::InvalidTestFrame(test_frame_index + 1, frames.len()))?;
+    let target_frame = video
+        .get_frame(test_frame_index)
+        .ok_or(CliError::InvalidTestFrame(test_frame_index + 1, video.len()))?;
 
     let index_range = (test_frame_index, test_frame_index + 1);
 
-    target_frame.save_as(&root_dir.join(&format!("test_frame_{}.png", test_frame_index + 1)))?;
+    save_bytes_as_image(
+        target_frame,
+        video.width as usize,
+        video.height as usize,
+        &root_dir.join(&format!("test_frame_{}.png", test_frame_index + 1)),
+    )?;
 
-    binary_sdf(&target_frame.add_border(project_config.border_width, project_config.border_color))
-        .save_as(&root_dir.join(&format!("gradated_test_frame_{}.png", test_frame_index + 1)))?;
+    let bordered_byte_image = add_border_to_byte_image(
+        target_frame,
+        video.width as usize,
+        video.height as usize,
+        project_config.border_width as usize,
+        project_config.border_color,
+    );
+
+    let gradated_byte_image =
+        binary_sdf(&bordered_byte_image, video.width as usize, video.height as usize);
+
+    save_bytes_as_image(
+        &gradated_byte_image,
+        video.width as usize,
+        video.height as usize,
+        &root_dir.join(&format!("gradated_test_frame_{}.png", test_frame_index + 1)),
+    )?;
 
     let frame_namespace =
         create_df_namespace(&project_config.namespace, &project_config.frame_dfs_dir);
@@ -199,7 +223,7 @@ fn test_project_n_from_config(
     if project_config.make_frames
     {
         write_json_frames_parallel(
-            frames,
+            video,
             frame_dim,
             index_range,
             border_width as u16,
@@ -221,47 +245,8 @@ fn test_project_n_from_config(
     Ok(())
 }
 
-// fn write_json_frames(
-//     frames: &Vec<MonoFrame>,
-//     frame_dim: (usize, usize),
-//     index_range: (usize, usize),
-//     border_width: u16,
-//     border_color: u8,
-//     output_dir: &Path,
-// ) -> Result<()>
-// {
-//     fs::create_dir_all(&output_dir).map_err(|e| ImplError::CreateDirectory(format!("{:?}", e)))?;
-
-//     for (index, frame) in (index_range.0..index_range.1).zip(frames.iter().skip(index_range.0))
-//     {
-//         let grad_frame = sdf::binary_sdf(&frame.add_border(border_width, border_color));
-//         let deflated_grad_frame = compress_zlib(&grad_frame.data)?;
-//         let encoded_deflated_grad_frame_data =
-//             general_purpose::STANDARD.encode(&deflated_grad_frame);
-//         let frame_json = json!(
-//             {
-//                 "type": "minecraft:flat_cache",
-//                 "argument": {
-//                   "type": "minecraft:cache_2d",
-//                   "argument": {
-//                     "type": "moredfs:single_channel_image_tessellation",
-//                     "x_size": frame_dim.0,
-//                     "z_size": frame_dim.1,
-//                     "deflated_frame_data": encoded_deflated_grad_frame_data
-//                   }
-//                 }
-//             }
-//         );
-//         let frame_json_string = serde_json::to_string_pretty(&frame_json)
-//             .map_err(|e| ImplError::JsonPrettifier(format!("{:?}", e)))?;
-//         fs::write(output_dir.join(&format!("{}.json", index + 1)), &frame_json_string)
-//             .map_err(|e| ImplError::FileWrite(format!("{:?}", e)))?;
-//     }
-//     Ok(())
-// }
-
 fn write_json_frames_parallel(
-    frames: &Vec<MonoFrame>,
+    frames: &MonoVideo,
     frame_dim: (usize, usize),
     index_range: (usize, usize),
     border_width: u16,
@@ -271,31 +256,38 @@ fn write_json_frames_parallel(
 {
     fs::create_dir_all(&output_dir).map_err(|e| ImplError::CreateDirectory(format!("{:?}", e)))?;
 
+    // Calculate bytes per frame
+    let bytes_per_frame = (frames.width as usize) * (frames.height as usize);
+
     // Store ImplError directly instead of Box<dyn Error>
     let errors: Mutex<Vec<ImplError>> = Mutex::new(Vec::new());
 
     // Process frames in parallel
-    (index_range.0..index_range.1)
-        .into_par_iter()
-        .zip(frames.par_iter().skip(index_range.0))
-        .for_each(|(index, frame)| {
-            match process_single_frame(
-                frame,
-                frame_dim,
-                index,
-                border_width,
-                border_color,
-                output_dir,
-            )
+    (index_range.0..index_range.1).into_par_iter().for_each(|index| {
+        // Extract the frame data for this specific frame
+        let frame_start = index * bytes_per_frame;
+        let frame_end = frame_start + bytes_per_frame;
+        let frame_data = &frames.data[frame_start..frame_end];
+
+        match process_single_frame(
+            frame_data,
+            frames.width as usize,
+            frames.height as usize,
+            frame_dim,
+            index,
+            border_width as usize,
+            border_color,
+            output_dir,
+        )
+        {
+            Ok(()) =>
+            {},
+            Err(e) =>
             {
-                Ok(()) =>
-                {},
-                Err(e) =>
-                {
-                    errors.lock().unwrap().push(e);
-                },
-            }
-        });
+                errors.lock().unwrap().push(e);
+            },
+        }
+    });
 
     // Check if any errors occurred
     let errors = errors.into_inner().unwrap();
@@ -303,24 +295,28 @@ fn write_json_frames_parallel(
     {
         return Err(Box::new(errors.into_iter().next().unwrap())); // Return first error
     }
-
     Ok(())
 }
 
 fn process_single_frame(
-    frame: &MonoFrame,
+    frame: &[u8],
+    width: usize,
+    height: usize,
     frame_dim: (usize, usize),
     index: usize,
-    border_width: u16,
+    border_width: usize,
     border_color: u8,
     output_dir: &Path,
 ) -> std::result::Result<(), ImplError>
 {
-    let grad_frame = binary_sdf(&frame.add_border(border_width, border_color));
+    let grad_frame = binary_sdf(
+        &add_border_to_byte_image(frame, width, height, border_width, border_color),
+        width,
+        height,
+    );
     let deflated_grad_frame =
-        compress_zlib(&grad_frame.data).map_err(|e| ImplError::FileWrite(format!("{:?}", e)))?;
+        compress_zlib(&grad_frame).map_err(|e| ImplError::FileWrite(format!("{:?}", e)))?;
     let encoded_deflated_grad_frame_data = general_purpose::STANDARD.encode(&deflated_grad_frame);
-
     let frame_json = json!(
         {
             "type": "minecraft:flat_cache",
@@ -335,13 +331,10 @@ fn process_single_frame(
             }
         }
     );
-
     let frame_json_string = serde_json::to_string_pretty(&frame_json)
         .map_err(|e| ImplError::JsonPrettifier(format!("{:?}", e)))?;
-
     fs::write(output_dir.join(&format!("{}.json", index + 1)), &frame_json_string)
         .map_err(|e| ImplError::FileWrite(format!("{:?}", e)))?;
-
     Ok(())
 }
 
@@ -446,7 +439,7 @@ fn compress_zlib(bytes: &[u8]) -> Result<Vec<u8>>
     Ok(compressed_bytes)
 }
 
-pub fn get_single_channel_frames<P>(video_path: P) -> Result<Vec<MonoFrame>>
+pub fn get_single_channel_frames<P>(video_path: P) -> Result<MonoVideo>
 where
     P: AsRef<Path>,
 {
@@ -478,7 +471,7 @@ where
     )
     .map_err(|e| ImplError::FFmpeg(format!("{:?}", e)))?;
 
-    let mut frames: Vec<MonoFrame> = vec![];
+    let mut frames: Vec<u8> = vec![];
 
     for (stream, packet) in input.packets()
     {
@@ -495,11 +488,7 @@ where
                     .run(&decoded, &mut mono_video)
                     .map_err(|e| ImplError::FFmpeg(format!("{:?}", e)))?;
 
-                frames.push(MonoFrame::new(
-                    mono_video.data(0).to_vec(), // Single channel data
-                    mono_video.width() as u16,
-                    mono_video.height() as u16,
-                ));
+                frames.extend_from_slice(mono_video.data(0));
             }
         }
     }
@@ -513,23 +502,22 @@ where
             .run(&decoded, &mut mono_video)
             .map_err(|e| ImplError::FFmpeg(format!("{:?}", e)))?;
 
-        frames.push(MonoFrame::new(
-            mono_video.data(0).to_vec(),
-            mono_video.width() as u16,
-            mono_video.height() as u16,
-        ));
+        frames.extend_from_slice(mono_video.data(0));
     }
-    Ok(frames)
+
+    Ok(MonoVideo::new(frames, decoder.width() as u16, decoder.height() as u16))
 }
 
-pub fn binary_sdf(frame: &MonoFrame) -> MonoFrame
+pub fn binary_sdf(
+    frame_bytes: &[u8],
+    width: usize,
+    height: usize,
+) -> Vec<u8>
 {
     // Compute the above threshold and below threshold SDF
     // Splits 0-127 & 128-255;
-    let above_distances =
-        chebyshev_sdf_above(&frame.data, frame.width as usize, frame.height as usize, 127);
-    let below_distances =
-        chebyshev_sdf_below(&frame.data, frame.width as usize, frame.height as usize, 127);
+    let above_distances = chebyshev_sdf_above(frame_bytes, width, height, 127);
+    let below_distances = chebyshev_sdf_below(frame_bytes, width, height, 127);
 
     // Then, find the `max_value` in them
     let above_max = *above_distances.iter().max().expect("SDF should never have size 0");
@@ -552,7 +540,7 @@ pub fn binary_sdf(frame: &MonoFrame) -> MonoFrame
         .collect();
 
     // Then, combine them, such that the minimum `below_bytes` masks to `above_bytes`
-    let combined_bytes: Vec<u8> = below_bytes
+    below_bytes
         .iter()
         .zip(&above_bytes)
         .map(|(&below, &above)| {
@@ -562,10 +550,7 @@ pub fn binary_sdf(frame: &MonoFrame) -> MonoFrame
                 _ => below,
             }
         })
-        .collect();
-
-    // Return it as a MonoFrame
-    MonoFrame::new(combined_bytes, frame.width, frame.height)
+        .collect()
 }
 
 fn chebyshev_sdf_below(
@@ -674,4 +659,44 @@ fn chebyshev_sdf_forward_pass(
             idx += 1;
         }
     }
+}
+
+pub fn save_bytes_as_image(
+    image_bytes: &[u8],
+    width: usize,
+    height: usize,
+    filename: &Path,
+) -> Result<()>
+{
+    let image: ImageBuffer<Luma<u8>, &[u8]> =
+        ImageBuffer::from_raw(width as u32, height as u32, image_bytes)
+            .ok_or(ImplError::ImageCreation)?;
+
+    image.save(filename).map_err(|_| ImplError::ImageSaving)?;
+    println!("Saved PNG to {}", filename.display());
+    Ok(())
+}
+
+pub fn add_border_to_byte_image(
+    byte_image: &[u8],
+    width: usize,
+    height: usize,
+    border_width: usize,
+    border_color: u8,
+) -> Vec<u8>
+{
+    let new_width = width + 2 * border_width;
+    let new_height = height + 2 * border_width;
+    let mut with_border = vec![border_color; new_width as usize * new_height as usize];
+
+    for y in 0..height
+    {
+        let src_start = y * width;
+        let src_end = src_start + width;
+        let dst_start = ((y + border_width) * new_width) + border_width;
+        let dst_end = dst_start + width;
+
+        with_border[dst_start..dst_end].copy_from_slice(&byte_image[src_start..src_end]);
+    }
+    with_border
 }

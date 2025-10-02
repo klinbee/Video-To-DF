@@ -2,7 +2,7 @@ mod command;
 mod config;
 mod error;
 mod functions;
-mod monoframe;
+mod monovideo;
 
 use std::{
     env,
@@ -17,7 +17,6 @@ use crate::{
     command::Command,
     config::*,
     error::*,
-    monoframe::MonoFrame,
 };
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
