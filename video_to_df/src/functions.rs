@@ -314,8 +314,8 @@ fn process_single_frame(
 {
     let grad_frame = binary_sdf(
         &add_border_to_byte_image(frame, width, height, border_width, border_color),
-        width,
-        height,
+        frame_dim.0,
+        frame_dim.1,
     );
     let deflated_grad_frame =
         compress_zlib(&grad_frame).map_err(|e| ImplError::FileWrite(format!("{:?}", e)))?;
