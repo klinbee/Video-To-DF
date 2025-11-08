@@ -19,6 +19,12 @@ use crate::{
     error::*,
 };
 
+/*
+ * Don't forget!
+ * cargo build --release
+ * cargo install --path .
+ */
+
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 fn main()

@@ -88,6 +88,8 @@ fn write_project_n_from_config(
 
     let grid_dir = root_dir.join(&project_config.grid_df_dir);
 
+    let grid_filename = &project_config.grid_df_name;
+
     let tp_dir = root_dir.join(&project_config.tp_dir);
 
     let index_start = match project_config.frame_start
@@ -127,7 +129,7 @@ fn write_project_n_from_config(
 
     if project_config.make_grid
     {
-        write_json_grid(index_range, frame_dim, &frame_namespace, &grid_dir)?;
+        write_json_grid(index_range, frame_dim, &frame_namespace, &grid_dir, &grid_filename)?;
     }
 
     if project_config.make_tp
@@ -178,6 +180,7 @@ fn test_project_n_from_config(
     let root_dir = &config.output_root_dir;
     let frame_dir = root_dir.join(&project_config.frame_dfs_dir);
     let grid_dir = root_dir.join(&project_config.grid_df_dir);
+    let grid_filename = &project_config.grid_df_name;
     let tp_dir = root_dir.join(&project_config.tp_dir);
 
     let test_frame_index = match project_config.test_frame
@@ -234,7 +237,7 @@ fn test_project_n_from_config(
 
     if project_config.make_grid
     {
-        write_json_grid(index_range, frame_dim, &frame_namespace, &grid_dir)?;
+        write_json_grid(index_range, frame_dim, &frame_namespace, &grid_dir, &grid_filename)?;
     }
 
     if project_config.make_tp
@@ -343,6 +346,7 @@ fn write_json_grid(
     frame_dim: (usize, usize),
     namespace: &str,
     output_dir: &Path,
+    filename: &str,
 ) -> Result<()>
 {
     fs::create_dir_all(&output_dir).map_err(|e| ImplError::CreateDirectory(format!("{:?}", e)))?;
@@ -360,7 +364,7 @@ fn write_json_grid(
     );
     let frame_json_string = serde_json::to_string_pretty(&frame_json)
         .map_err(|e| ImplError::JsonPrettifier(format!("{:?}", e)))?;
-    fs::write(output_dir.join("all_frames.json"), &frame_json_string)
+    fs::write(output_dir.join(format!("{}.json", filename)), &frame_json_string)
         .map_err(|e| ImplError::FileWrite(format!("{:?}", e)))?;
     Ok(())
 }
